@@ -1,0 +1,15 @@
+pip
+setuptools
+pdbpp
+jupyter
+matplotlib
+torch
+torchvision
+pyro-ppl
+jupyter_http_over_ws
+pandas
+scipy 
+trackpy
+tifffile
+scikit-image
+pickle
