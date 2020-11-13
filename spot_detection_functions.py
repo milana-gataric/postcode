@@ -5,7 +5,7 @@ import trackpy
 from skimage.morphology import white_tophat, disk
 
 
-# functions for detecting and extracting spots from raw images required prior to decoding
+# functions for detecting and extracting spots from registered images required prior to decoding
 def detect_and_extract_spots(imgs_coding, anchors, C, R, compute_also_without_tophat=False,
                              trackpy_diam_detect=5, trackpy_search_range=3, spot_diam_tophat=5):
     # apply trackpy to each round

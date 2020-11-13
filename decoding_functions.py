@@ -16,7 +16,6 @@ assert pyro.__version__.startswith('1')
 
 # auxiliary functions required for decoding
 def torch_format(numpy_array):
-    # returns a flat K x (CxD) torch float tensor from a numpy_array of of dimension K x C x D
     D = numpy_array.shape[1] * numpy_array.shape[2]
     return torch.tensor(numpy_array).float().transpose(1, 2).reshape(numpy_array.shape[0], D)
 
