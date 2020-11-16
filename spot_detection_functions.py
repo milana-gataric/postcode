@@ -68,7 +68,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
-                                spots_params, compute_also_without_tophat=False):
+                                spots_params, anchor_available=True, compute_also_without_tophat=False):
     spots = np.empty((0, C, R))
     spots_notophat = np.empty((0, C, R))
     spots_loc = pd.DataFrame(columns=['X', 'Y', 'Tile'])
@@ -111,10 +111,14 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                         imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
                                                                                 disk(spots_params['spot_diam_tophat']))
                 # extract anchor channel across all cycles
-                anchors = np.swapaxes(
+                if anchor_available:
+                    anchors = np.swapaxes(
                     np.swapaxes(
                         np.squeeze(imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),
                         0, 2), 1, 2)
+                else:
+                    # if anchor is not available, form "quasi-anchors" from coding channels
+                    anchors = np.swapaxes(np.swapaxes(imgs_coding_tophat.max(axis=2), 0, 2), 1, 2)
 
                 # detect and extract spots from the loaded tile
                 spots_i, centers_i, spots_notophat_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
