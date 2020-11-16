@@ -12,3 +12,4 @@ scipy
 trackpy
 tifffile
 scikit-image
+starfish
