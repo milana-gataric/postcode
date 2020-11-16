@@ -6,8 +6,12 @@ from skimage.morphology import white_tophat, disk
 
 
 # functions for detecting and extracting spots from registered images required prior to decoding
-def detect_and_extract_spots(imgs_coding, anchors, C, R, compute_also_without_tophat=False,
-                             trackpy_diam_detect=5, trackpy_search_range=3, spot_diam_tophat=5):
+def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None, compute_also_without_tophat=False,
+                             trackpy_diam_detect=5, trackpy_search_range=3):
+    ###############
+    # detects spots using R images passed via variable 'anchors' and
+    # extracts detected spots using CxR images passed via 'imgs_coding'
+    ###############
     # apply trackpy to each round
     trackpy.quiet(suppress=True)
     tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_diam_detect), search_range=trackpy_search_range)
@@ -28,12 +32,6 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, compute_also_without_to
     centers_c01 = np.transpose(
         np.stack((centers_x[:, 0] + 1, centers_y[:, 0] + 1)))  # equivalent to the centers in matlab
 
-    # apply top-hat filtering to each coding channel
-    imgs_coding_tophat = np.zeros_like(imgs_coding)
-    for ind_cy in range(R):
-        for ind_ch in range(C):
-            imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
-                                                                    disk(spot_diam_tophat))
     # extract max intensity values from each (top-hat-ed) coding channel at the center coordinates +- 1 pixel
     spot_intensities_d = np.zeros((9, num_spots, C, R))
     d = -1
@@ -41,12 +39,12 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, compute_also_without_to
         for dy in np.array([-1, 0, 1]):
             d = d + 1
             for ind_cy in range(R):
-                x_coord = np.maximum(0, np.minimum(imgs_coding_tophat.shape[1] - 1,
+                x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
                                                    np.around(centers_x[:, ind_cy]).astype('int32') + dx))
-                y_coord = np.maximum(0, np.minimum(imgs_coding_tophat.shape[0] - 1,
+                y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
                                                    np.around(centers_y[:, ind_cy]).astype('int32') + dy))
                 for ind_ch in range(C):
-                    spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding_tophat[y_coord, x_coord, ind_ch, ind_cy]
+                    spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
     spot_intensities = np.max(spot_intensities_d, axis=0)
 
     if compute_also_without_tophat:
@@ -56,12 +54,12 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, compute_also_without_to
             for dy in np.array([-1, 0, 1]):
                 d = d + 1
                 for ind_cy in range(R):
-                    x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
+                    x_coord = np.maximum(0, np.minimum(imgs_also_without_tophat.shape[1] - 1,
                                                        np.around(centers_x[:, ind_cy]).astype('int32') + dx))
-                    y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
+                    y_coord = np.maximum(0, np.minimum(imgs_also_without_tophat.shape[0] - 1,
                                                        np.around(centers_y[:, ind_cy]).astype('int32') + dy))
                     for ind_ch in range(C):
-                        spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
+                        spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_also_without_tophat[y_coord, x_coord, ind_ch, ind_cy]
         spot_intensities_notophat = np.max(spot_intensities_d, axis=0)
     else:
         spot_intensities_notophat = None
@@ -106,18 +104,24 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                     np.float32)
 
                 imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
+                # apply top-hat filtering to each coding channel
+                imgs_coding_tophat = np.zeros_like(imgs_coding)
+                for ind_cy in range(R):
+                    for ind_ch in range(C):
+                        imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
+                                                                                disk(spots_params['spot_diam_tophat']))
+                # extract anchor channel across all cycles
                 anchors = np.swapaxes(
                     np.swapaxes(
                         np.squeeze(imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),
-                        0, 2), 1,
-                    2)
+                        0, 2), 1, 2)
 
                 # detect and extract spots from the loaded tile
-                spots_i, centers_i, spots_notophat_i = detect_and_extract_spots(imgs_coding, anchors, C, R,
+                spots_i, centers_i, spots_notophat_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
+                                                                                imgs_coding,
                                                                                 compute_also_without_tophat,
                                                                                 spots_params['trackpy_diam_detect'],
-                                                                                spots_params['trackpy_search_range'],
-                                                                                spots_params['spot_diam_tophat'])
+                                                                                spots_params['trackpy_search_range'])
                 N_i = spots_i.shape[0]
                 if N_i > 0:
                     spots = np.concatenate((spots, spots_i))
