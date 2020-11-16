@@ -179,7 +179,7 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     data_log_std = data_log[ind_keep, :].std(dim=0, keepdim=True)
     data_norm = (data_log - data_log_mean) / data_log_std  # column-wise normalization
     # training:
-    random.seed(1)
+    pyro.set_rng_seed(1) # seed for reproducibility when N<batch_size
     losses = train(svi, num_iter, data_norm[ind_keep, :], len(ind_keep), D, C, R, codes.shape[0], codes,
                    print_training_progress, min(len(ind_keep), batch_size))
     #print('Final loss: {}'.format(1 / N * losses[num_iter - 1]))
