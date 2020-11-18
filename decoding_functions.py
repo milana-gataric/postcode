@@ -152,7 +152,7 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         codes = torch.cat((codes, torch.zeros(1, D)))
     else:
         bkg_ind = np.empty((0,), dtype=np.int32)
-    if estimate_additional_barcodes != None:
+    if np.any(estimate_additional_barcodes != None):
         inf_ind = codes.shape[0] + np.arange(estimate_additional_barcodes.shape[0])
         codes = torch.cat((codes, torch_format(estimate_additional_barcodes)))
     else:
@@ -257,7 +257,7 @@ def decoding_output_to_dataframe(out, df_class_names, df_class_codes, thr=0):
     K = len(out['class_ind']['genes'])
     decoded[np.isin(ind, out['class_ind']['inf'])] = K + 1  # inf class
     decoded[np.isin(ind, out['class_ind']['bkg'])] = K + 2  # bkg class
-    decoded[ind == out['class_ind']['nan']] = K + 3  # NaN class
+    decoded[np.isin(ind, out['class_ind']['nan'])] = K + 3  # NaN class
     if thr > 0:
         decoded[val < thr] = K + 4  # thr class
     Name = df_class_names[decoded - 1]

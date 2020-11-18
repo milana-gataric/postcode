@@ -3,19 +3,24 @@ import pandas as pd
 import tifffile
 import trackpy
 from skimage.morphology import white_tophat, disk
+from skimage.feature import blob_log
 
 
 # functions for detecting and extracting spots from registered images required prior to decoding
 def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None,
-                             compute_also_without_tophat=False,
+                             compute_also_without_tophat=False, norm_anchors=False, use_blob_detector=False,
                              trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64):
     ###############
     # detects spots using images passed via variable 'anchors' (can be a single image or R frames) and
     # extracts detected spots using CxR images passed via 'imgs_coding'
     ###############
+    if use_blob_detector:
+        norm_anchors = True
     trackpy.quiet(suppress=True)
     if len(anchors.shape) > 2:  # if there are multiple frames, detect spots in each and link them
         # apply trackpy to each round
+        if norm_anchors:
+            anchors = (anchors-np.mean(anchors,axis=(1,2),keepdims=True))/np.std(anchors,axis=(1,2),keepdims=True)
         tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc),
                                  search_range=trackpy_search_range)
         # find spots appearing in all cycles
@@ -33,13 +38,22 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
             centers_y[i, :] = np.array(tracks[tracks['particle'] == id_particle]['y'])
             centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
     else:  # otherwise, detect spots using a single frame
-        tp_loc = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc)
-        num_spots = tp_loc.shape[0]
-        centers_y = np.repeat(np.array(tp_loc['y']).reshape((num_spots, 1)), R, axis=1)
-        centers_x = np.repeat(np.array(tp_loc['x']).reshape((num_spots, 1)), R, axis=1)
+        if norm_anchors:
+            anchors = (anchors-anchors.mean())/anchors.std()
+        if use_blob_detector:
+            locs = blob_log(anchors, min_sigma=trackpy_diam_detect/2, max_sigma=3/2*trackpy_diam_detect, num_sigma=11, threshold=0.25)
+            locs_y = locs[:,0]
+            locs_x = locs[:,1]
+        else:
+            locs = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc)
+            locs_y = np.array(locs['y'])
+            locs_x = np.array(locs['x'])
+        num_spots = locs.shape[0]
+        centers_y = np.repeat(locs_y.reshape((num_spots, 1)), R, axis=1)
+        centers_x = np.repeat(locs_x.reshape((num_spots, 1)), R, axis=1)
 
     centers_c01 = np.transpose(
-        np.stack((centers_x[:, 0] + 1, centers_y[:, 0] + 1)))  # equivalent to the centers in matlab
+        np.stack((centers_x[:, 0], centers_y[:, 0])))  # equivalent to the centers in matlab if + 1
 
     # extract max intensity values from each (top-hat-ed) coding channel at the center coordinates +- 1 pixel
     spot_intensities_d = np.zeros((9, num_spots, C, R))
@@ -78,7 +92,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
-                                spots_params, anchor_available=True, anchors_cy_ind_for_spot_detect=None,
+                                spots_params, anchor_available=True, anchors_cy_ind_for_spot_detect=None, norm_anchors=False, use_blob_detector=False,
                                 compute_also_without_tophat=False):
     # anchors_cy_ind_for_spot_detect can be any number in {0,..,R-1} to indicate if a single frame should be used
     # for spot detection, otherwise by default all cycles are considered for spot detection
@@ -147,6 +161,8 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                 spots_i, centers_i, spots_notophat_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
                                                                                 imgs_coding,
                                                                                 compute_also_without_tophat,
+                                                                                norm_anchors,
+                                                                                use_blob_detector,
                                                                                 spots_params['trackpy_diam_detect'],
                                                                                 spots_params['trackpy_search_range'],
                                                                                 spots_params['trackpy_prc'])
