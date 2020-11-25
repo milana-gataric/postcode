@@ -151,8 +151,9 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),
                             0, 2), 1, 2)
                 else:
-                    # if anchor is not available, form "quasi-anchors" from coding channels
-                    anchors = np.swapaxes(np.swapaxes(imgs_coding_tophat.max(axis=2), 0, 2), 1, 2)
+                    # if anchor is not available, form "quasi-anchors" from coding channels (already top-hat filtered + normalized)
+                    imgs_coding_tophat_norm = (imgs_coding_tophat-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))/(np.percentile(imgs_coding_tophat, 99.99, axis=(0,1), keepdims=True)-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))
+                    anchors = np.swapaxes(np.swapaxes(imgs_coding_tophat_norm.max(axis=2), 0, 2), 1, 2)
 
                 anchors = anchors[anchors_cy_ind_for_spot_detect, :,
                           :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
