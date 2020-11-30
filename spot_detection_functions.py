@@ -92,7 +92,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
-                                spots_params, anchor_available=True, anchors_cy_ind_for_spot_detect=None, norm_anchors=False, use_blob_detector=False,
+                                spots_params, ind_cy_move_forward_by=0, anchor_available=True, anchors_cy_ind_for_spot_detect=None, norm_anchors=False, use_blob_detector=False,
                                 compute_also_without_tophat=False):
     # anchors_cy_ind_for_spot_detect can be any number in {0,..,R-1} to indicate if a single frame should be used
     # for spot detection, otherwise by default all cycles are considered for spot detection
@@ -128,11 +128,11 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
                                     tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
                                         ind_ch] + '_c0' + str(
-                                        ind_cy + 1) + '_' + tile_name + '.tif').astype(np.float32)
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(np.float32)
                             except:
                                 imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
                                     tifs_path + tiles_info['filename_prefix'] + tile_name + '_c0' + str(
-                                        ind_cy + 1) + '_' + channels_info['channel_names'][ind_ch] + '.tif').astype(
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][ind_ch] + '.tif').astype(
                                     np.float32)
 
                 imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
@@ -153,6 +153,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                 else:
                     # if anchor is not available, form "quasi-anchors" from coding channels (already top-hat filtered + normalized)
                     imgs_coding_tophat_norm = (imgs_coding_tophat-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))/(np.percentile(imgs_coding_tophat, 99.99, axis=(0,1), keepdims=True)-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))
+                    #imgs_coding_tophat_norm = imgs_coding_tophat # without normalization
                     anchors = np.swapaxes(np.swapaxes(imgs_coding_tophat_norm.max(axis=2), 0, 2), 1, 2)
 
                 anchors = anchors[anchors_cy_ind_for_spot_detect, :,
