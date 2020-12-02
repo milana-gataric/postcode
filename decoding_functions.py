@@ -140,12 +140,21 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     # spots: a numpy array of dim N x C x R;
     # barcodes_01: a numpy array of dim K x C x R
     ##############################
+    
+#     if torch.cuda.is_available():  
+#         dev = "cuda:0" 
+#     else:  
+#           dev = "cpu"  
+#     device = torch.device(dev)  
+   
+    
     N = spots.shape[0]
     C = spots.shape[1]
     R = spots.shape[2]
     K = barcodes_01.shape[0]
     D = C * R
     data = torch_format(spots)
+    #data = data.to(device)
     codes = torch_format(barcodes_01)
     if estimate_bkg:
         bkg_ind = codes.shape[0]

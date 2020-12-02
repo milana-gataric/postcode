@@ -181,4 +181,4 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                         np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
                         columns=['X', 'Y', 'Tile'], index=None)
                     spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
-    return spots, spots_loc, spots_notophat
+    return spots, spots_loc, spots_notophat#, imgs_coding_tophat
