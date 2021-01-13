@@ -66,7 +66,7 @@ def mat_sqrt(A, D):
 
 @config_enumerate
 def model_constrained_tensor(data, N, D, C, R, K, codes, batch_size=None):
-    w = pyro.param('weigths', torch.ones(K) / K, constraint=constraints.simplex)
+    w = pyro.param('weights', torch.ones(K) / K, constraint=constraints.simplex)
 
     # using tensor sigma
     sigma_ch_v = pyro.param('sigma_ch_v', torch.eye(C)[np.tril_indices(C, 0)])
@@ -75,13 +75,11 @@ def model_constrained_tensor(data, N, D, C, R, K, codes, batch_size=None):
     sigma_ro = chol_sigma_from_vec(sigma_ro_v, R)
     sigma = kronecker_product(sigma_ro, sigma_ch)
 
-    # codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(D), constraint=constraints.positive)
-    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(D), constraint=constraints.greater_than(1.))
-    codes_tr = torch.diag(codes_tr_v)
+    # codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(1, D), constraint=constraints.positive)
+    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(1, D), constraint=constraints.greater_than(1.))
     codes_tr_consts_v = pyro.param('codes_tr_consts_v', -1 * torch.ones(1, D))
-    codes_tr_consts = codes_tr_consts_v.repeat(K, 1)
 
-    theta = torch.matmul(torch.matmul(codes, codes_tr) + codes_tr_consts, mat_sqrt(sigma, D))
+    theta = torch.matmul(codes * codes_tr_v + codes_tr_consts_v, mat_sqrt(sigma, D))
 
     with pyro.plate('data', N, batch_size) as batch:
         z = pyro.sample('z', Categorical(w))
@@ -89,25 +87,49 @@ def model_constrained_tensor(data, N, D, C, R, K, codes, batch_size=None):
 
 
 auto_guide_constrained_tensor = AutoDelta(poutine.block(model_constrained_tensor,
-                                                        expose=['weigths', 'codes_tr_v', 'codes_tr_consts_v',
+                                                        expose=['weights', 'codes_tr_v', 'codes_tr_consts_v',
                                                                 'sigma_ch_v', 'sigma_ro_v']))
 
 
 @config_enumerate
+def model_constrained_tensor_probe_ef(data, N, D, C, R, K, codes, batch_size=None):
+    w = pyro.param('weights', torch.ones(K) / K, constraint=constraints.simplex)
+
+    # using tensor sigma
+    sigma_ch_v = pyro.param('sigma_ch_v', torch.eye(C)[np.tril_indices(C, 0)])
+    sigma_ch = chol_sigma_from_vec(sigma_ch_v, C)
+    sigma_ro_v = pyro.param('sigma_ro_v', torch.eye(D)[np.tril_indices(R, 0)])
+    sigma_ro = chol_sigma_from_vec(sigma_ro_v, R)
+    sigma = kronecker_product(sigma_ro, sigma_ch)
+
+    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(1, D), constraint=constraints.greater_than(1.))
+    codes_tr_consts_v = pyro.param('codes_tr_consts_v', -1 * torch.ones(1, D))
+
+    theta_consts_v = pyro.param('theta_consts_v', torch.ones(K, 1), constraint=constraints.positive)
+    theta = torch.matmul(theta_consts_v * codes * codes_tr_v + codes_tr_consts_v, mat_sqrt(sigma, D))
+
+    with pyro.plate('data', N, batch_size) as batch:
+        z = pyro.sample('z', Categorical(w))
+        pyro.sample('obs', MultivariateNormal(theta[z], sigma), obs=data[batch])
+
+
+auto_guide_constrained_tensor_probe_ef = AutoDelta(poutine.block(model_constrained_tensor_probe_ef,
+                                                                 expose=['weights', 'codes_tr_v', 'codes_tr_consts_v',
+                                                                         'theta_consts_v', 'sigma_ch_v', 'sigma_ro_v']))
+
+
+@config_enumerate
 def model_constrained_general(data, N, D, C, R, K, codes, batch_size=None):
-    w = pyro.param('weigths', torch.ones(K) / K, constraint=constraints.simplex)
+    w = pyro.param('weights', torch.ones(K) / K, constraint=constraints.simplex)
 
     # using generic sigma
     sigma_v = pyro.param('sigma_v', torch.eye(D)[np.tril_indices(D, 0)])
     sigma = chol_sigma_from_vec(sigma_v, D)
 
-    # codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(D), constraint=constraints.positive)
-    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(D), constraint=constraints.greater_than(1.))
-    codes_tr = torch.diag(codes_tr_v)
+    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(1, D), constraint=constraints.greater_than(1.))
     codes_tr_consts_v = pyro.param('codes_tr_consts_v', -1 * torch.ones(1, D))
-    codes_tr_consts = codes_tr_consts_v.repeat(K, 1)
 
-    theta = torch.matmul(torch.matmul(codes, codes_tr) + codes_tr_consts, mat_sqrt(sigma, D))
+    theta = torch.matmul(codes * codes_tr_v + codes_tr_consts_v, mat_sqrt(sigma, D))
 
     with pyro.plate('data', N, batch_size) as batch:
         z = pyro.sample('z', Categorical(w))
@@ -115,8 +137,32 @@ def model_constrained_general(data, N, D, C, R, K, codes, batch_size=None):
 
 
 auto_guide_constrained_general = AutoDelta(poutine.block(model_constrained_general,
-                                                         expose=['weigths', 'codes_tr_v', 'codes_tr_consts_v',
+                                                         expose=['weights', 'codes_tr_v', 'codes_tr_consts_v',
                                                                  'sigma_v']))
+
+
+@config_enumerate
+def model_constrained_general_probe_ef(data, N, D, C, R, K, codes, batch_size=None):
+    w = pyro.param('weights', torch.ones(K) / K, constraint=constraints.simplex)
+
+    # using generic sigma
+    sigma_v = pyro.param('sigma_v', torch.eye(D)[np.tril_indices(D, 0)])
+    sigma = chol_sigma_from_vec(sigma_v, D)
+
+    codes_tr_v = pyro.param('codes_tr_v', 3 * torch.ones(1, D), constraint=constraints.greater_than(1.))
+    codes_tr_consts_v = pyro.param('codes_tr_consts_v', -1 * torch.ones(1, D))
+
+    theta_consts_v = pyro.param('theta_consts_v', torch.ones(K, 1), constraint=constraints.positive)
+    theta = torch.matmul(theta_consts_v * codes * codes_tr_v + codes_tr_consts_v, mat_sqrt(sigma, D))
+
+    with pyro.plate('data', N, batch_size) as batch:
+        z = pyro.sample('z', Categorical(w))
+        pyro.sample('obs', MultivariateNormal(theta[z], sigma), obs=data[batch])
+
+
+auto_guide_constrained_general_probe_ef = AutoDelta(poutine.block(model_constrained_general_probe_ef,
+                                                                  expose=['weights', 'codes_tr_v', 'codes_tr_consts_v',
+                                                                          'theta_consts_v', 'sigma_v']))
 
 
 def train(svi, num_iterations, data, N, D, C, R, K, codes, print_training_progress, batch_size):
@@ -135,44 +181,53 @@ def train(svi, num_iterations, data, N, D, C, R, K, codes, print_training_progre
 
 # input - output decoding function
 def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_to_remove=99.95, cov_tensor=True,
-                      estimate_bkg=True, estimate_additional_barcodes=None, add_remaining_barcodes_prior=0.05, print_training_progress=True):
+                      probe_ef=False,
+                      estimate_bkg=True, estimate_additional_barcodes=None, add_remaining_barcodes_prior=0.05,
+                      print_training_progress=True):
     ##############################
     # spots: a numpy array of dim N x C x R;
     # barcodes_01: a numpy array of dim K x C x R
     ##############################
-    
-#     if torch.cuda.is_available():  
-#         dev = "cuda:0" 
-#     else:  
-#           dev = "cpu"  
-#     device = torch.device(dev)  
-   
-    
+
+    #     if torch.cuda.is_available():
+    #         dev = "cuda:0"
+    #     else:
+    #           dev = "cpu"
+    #     device = torch.device(dev)
+
     N = spots.shape[0]
     C = spots.shape[1]
     R = spots.shape[2]
     K = barcodes_01.shape[0]
     D = C * R
     data = torch_format(spots)
-    #data = data.to(device)
+    # data = data.to(device)
     codes = torch_format(barcodes_01)
     if estimate_bkg:
         bkg_ind = codes.shape[0]
         codes = torch.cat((codes, torch.zeros(1, D)))
     else:
         bkg_ind = np.empty((0,), dtype=np.int32)
-    if np.any(estimate_additional_barcodes != None):
+    if np.any(estimate_additional_barcodes is not None):
         inf_ind = codes.shape[0] + np.arange(estimate_additional_barcodes.shape[0])
         codes = torch.cat((codes, torch_format(estimate_additional_barcodes)))
     else:
         inf_ind = np.empty((0,), dtype=np.int32)
     optim = Adam({'lr': 0.085, 'betas': [0.85, 0.99]})
     if cov_tensor:
-        svi = SVI(model_constrained_tensor, auto_guide_constrained_tensor, optim,
-                  loss=TraceEnum_ELBO(max_plate_nesting=1))
+        if probe_ef:
+            svi = SVI(model_constrained_tensor_probe_ef, auto_guide_constrained_tensor_probe_ef, optim,
+                      loss=TraceEnum_ELBO(max_plate_nesting=1))
+        else:
+            svi = SVI(model_constrained_tensor, auto_guide_constrained_tensor, optim,
+                      loss=TraceEnum_ELBO(max_plate_nesting=1))
     else:
-        svi = SVI(model_constrained_general, auto_guide_constrained_general, optim,
-                  loss=TraceEnum_ELBO(max_plate_nesting=1))
+        if probe_ef:
+            svi = SVI(model_constrained_general_probe_ef, auto_guide_constrained_general_probe_ef, optim,
+                      loss=TraceEnum_ELBO(max_plate_nesting=1))
+        else:
+            svi = SVI(model_constrained_general, auto_guide_constrained_general, optim,
+                      loss=TraceEnum_ELBO(max_plate_nesting=1))
     if up_prc_to_remove < 100:
         ind_keep = np.where(np.sum(data.numpy() < np.percentile(data.numpy(), up_prc_to_remove, axis=0), axis=1) == D)[
             0]
@@ -188,11 +243,11 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     data_log_std = data_log[ind_keep, :].std(dim=0, keepdim=True)
     data_norm = (data_log - data_log_mean) / data_log_std  # column-wise normalization
     # training:
-    pyro.set_rng_seed(1) # seed for reproducibility when N<batch_size
+    pyro.set_rng_seed(1)  # seed for reproducibility when N<batch_size
     losses = train(svi, num_iter, data_norm[ind_keep, :], len(ind_keep), D, C, R, codes.shape[0], codes,
                    print_training_progress, min(len(ind_keep), batch_size))
-    #print('Final loss: {}'.format(1 / N * losses[num_iter - 1]))
-    w_star = pyro.param('weigths').detach()
+    # print('Final loss: {}'.format(1 / N * losses[num_iter - 1]))
+    w_star = pyro.param('weights').detach()
     if cov_tensor:
         sigma_ch_v_star = pyro.param('sigma_ch_v').detach()
         sigma_ro_v_star = pyro.param('sigma_ro_v').detach()
@@ -201,16 +256,19 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         sigma_v_star = pyro.param('sigma_v').detach()  # if using generic class covariance
         sigma_star = chol_sigma_from_vec(sigma_v_star, D)
     codes_tr_v_star = pyro.param('codes_tr_v').detach()
-    codes_tr_star = torch.diag(codes_tr_v_star)
     codes_tr_consts_v_star = pyro.param('codes_tr_consts_v').detach()
-    codes_tr_consts_star = codes_tr_consts_v_star.repeat(codes.shape[0], 1)
-    theta_star = torch.matmul(torch.matmul(codes, codes_tr_star) + codes_tr_consts_star, mat_sqrt(sigma_star, D))
+    if probe_ef:
+        theta_consts_v_star = pyro.param('theta_consts_v').detach()
+        theta_star = torch.matmul(theta_consts_v_star * codes * codes_tr_v_star + codes_tr_consts_v_star,
+            mat_sqrt(sigma_star, D))
+    else:
+        theta_consts_v_star = None
+        theta_star = torch.matmul(codes * codes_tr_v_star + codes_tr_consts_v_star, mat_sqrt(sigma_star, D))
 
     # computing class probabilities with appropriate priors
-    if w_star.shape[
-        0] > K:  # making sure that the K barcode classes have higher prior in case there are more than K classes
+    if w_star.shape[0] > K:  # making sure that the K barcode classes have higher prior in case there are more than K classes
         w_star_mod = torch.cat((w_star[0:K], w_star[0:K].min().repeat(w_star.shape[0] - K)))
-        #w_star_mod = torch.cat((K/w_star.shape[0]*w_star[0:K], (w_star.shape[0]-K)/w_star.shape[0]*w_star[K:].reshape(w_star[K:].shape[0],)))#originaly used this
+        # w_star_mod = torch.cat((K/w_star.shape[0]*w_star[0:K], (w_star.shape[0]-K)/w_star.shape[0]*w_star[K:].reshape(w_star[K:].shape[0],)))#originaly used this
         w_star_mod = w_star_mod / w_star_mod.sum()
     else:
         w_star_mod = w_star
@@ -233,7 +291,7 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         w_star_all = torch.cat(
             (alpha * w_star_mod, torch.tensor((1 - alpha) / codes_inf.shape[0]).repeat(codes_inf.shape[0])))
         class_probs_star = e_step(data_norm, w_star_all, torch.matmul(
-            torch.matmul(torch.cat((codes, codes_inf)), codes_tr_star) + codes_tr_consts_v_star.repeat(
+            torch.cat((codes, codes_inf)) * codes_tr_v_star + codes_tr_consts_v_star.repeat(
                 w_star_all.shape[0], 1), mat_sqrt(sigma_star, D)), sigma_star, N, w_star_all.shape[0])
     else:
         class_probs_star = e_step(data_norm, w_star_mod, theta_star, sigma_star, N, codes.shape[0])
@@ -252,6 +310,7 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     class_ind = {'genes': np.arange(K), 'bkg': bkg_ind, 'inf': inf_ind, 'nan': nan_class_ind}
     torch_params = {'w_star': w_star, 'w_star_mod': w_star_mod, 'sigma_star': sigma_star, 'theta_star': theta_star,
                     'codes_tr_consts_v_star': codes_tr_consts_v_star, 'codes_tr_v_star': codes_tr_v_star,
+                    'theta_consts_v_star': theta_consts_v_star,
                     'losses': losses}
     norm_const = {'log_add': log_add, 'data_log_mean': data_log_mean, 'data_log_std': data_log_std}
 
@@ -277,5 +336,3 @@ def decoding_output_to_dataframe(out, df_class_names, df_class_codes, thr=0):
         axis=1)
     decoded_spots_df = pd.DataFrame(df_data, columns=['Name', 'Code', 'Probability'])
     return decoded_spots_df
-
-
