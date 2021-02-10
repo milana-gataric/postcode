@@ -7,7 +7,7 @@ from tqdm import tqdm
 import pyro
 from pyro.distributions import *
 from pyro.optim import Adam
-from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
+from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate, infer_discrete
 from pyro import poutine
 from pyro.infer.autoguide import AutoDelta
 
@@ -64,6 +64,13 @@ def mat_sqrt(A, D):
     return torch.mm(torch.mm(U, torch.diag(S_sqrt)), V.t())
 
 
+def map_states(data, N, D, C, R, K, codes, batch_size=None, temperature=0):
+    inferred_model = infer_discrete(poutine.replay(model_constrained_tensor, trace=poutine.trace(auto_guide_constrained_tensor).get_trace(data, N, D, C, R, K, codes)), temperature=temperature,
+                                    first_available_dim=-2)  # avoid conflict with data plate
+    trace = poutine.trace(inferred_model).get_trace(data, N, D, C, R, K, codes)
+    return trace.nodes["z"]["value"]
+
+
 @config_enumerate
 def model_constrained_tensor(data, N, D, C, R, K, codes, batch_size=None):
     w = pyro.param('weights', torch.ones(K) / K, constraint=constraints.simplex)
@@ -82,6 +89,8 @@ def model_constrained_tensor(data, N, D, C, R, K, codes, batch_size=None):
     theta = torch.matmul(codes * codes_tr_v + codes_tr_consts_v, mat_sqrt(sigma, D))
 
     with pyro.plate('data', N, batch_size) as batch:
+        #if j==2:
+        #    print(map_states(data, data.shape[0], D, C, R, K, codes))
         z = pyro.sample('z', Categorical(w))
         pyro.sample('obs', MultivariateNormal(theta[z], sigma), obs=data[batch])
 

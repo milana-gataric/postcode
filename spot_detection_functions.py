@@ -9,9 +9,9 @@ from skimage.feature import blob_log
 # functions for detecting and extracting spots from registered images required prior to decoding
 def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None,
                              compute_also_without_tophat=False, norm_anchors=False, use_blob_detector=False,
-                             trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64):
+                             trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64, trackpy_sep=None):
     ###############
-    # detects spots using images passed via variable 'anchors' (can be a single image or R frames) and
+    # detects spots using images passed via variable 'anchors' (can be a single (2d) image or R (2d/3d) frames) and
     # extracts detected spots using CxR images passed via 'imgs_coding'
     ###############
     if use_blob_detector:
@@ -20,8 +20,9 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
     if len(anchors.shape) > 2:  # if there are multiple frames, detect spots in each and link them
         # apply trackpy to each round
         if norm_anchors:
-            anchors = (anchors-np.mean(anchors,axis=(1,2),keepdims=True))/np.std(anchors,axis=(1,2),keepdims=True)
-        tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc),
+            anchors = (anchors - np.mean(anchors, axis=(-2, -1), keepdims=True)) / np.std(anchors, axis=(-2, -1),
+                                                                                        keepdims=True)
+        tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_sep),
                                  search_range=trackpy_search_range)
         # find spots appearing in all cycles
         spots_id_all_anchors = tracks['particle'][tracks['frame'] == 0].unique()
@@ -33,17 +34,27 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
         # collect centers of all spots
         centers_y = np.zeros((num_spots, R))
         centers_x = np.zeros((num_spots, R))
-        for i in range(num_spots):
-            id_particle = spots_id_all_anchors[i]
-            centers_y[i, :] = np.array(tracks[tracks['particle'] == id_particle]['y'])
-            centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
+        if len(anchors.shape) > 3: #if there is z dim
+            centers_z = np.zeros((num_spots, R))
+            for i in range(num_spots):
+                id_particle = spots_id_all_anchors[i]
+                centers_y[i, :] = np.array(tracks[tracks['particle'] == id_particle]['y'])
+                centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
+                centers_z[i, :] = np.array(tracks[tracks['particle'] == id_particle]['z'])
+        else:
+            for i in range(num_spots):
+                id_particle = spots_id_all_anchors[i]
+                centers_y[i, :] = np.array(tracks[tracks['particle'] == id_particle]['y'])
+                centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
+
     else:  # otherwise, detect spots using a single frame
         if norm_anchors:
-            anchors = (anchors-anchors.mean())/anchors.std()
+            anchors = (anchors - anchors.mean()) / anchors.std()
         if use_blob_detector:
-            locs = blob_log(anchors, min_sigma=trackpy_diam_detect/2, max_sigma=3/2*trackpy_diam_detect, num_sigma=11, threshold=0.25)
-            locs_y = locs[:,0]
-            locs_x = locs[:,1]
+            locs = blob_log(anchors, min_sigma=trackpy_diam_detect / 2, max_sigma=3 / 2 * trackpy_diam_detect,
+                            num_sigma=11, threshold=0.25)
+            locs_y = locs[:, 0]
+            locs_x = locs[:, 1]
         else:
             locs = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc)
             locs_y = np.array(locs['y'])
@@ -56,19 +67,37 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
         np.stack((centers_x[:, 0], centers_y[:, 0])))  # equivalent to the centers in matlab if + 1
 
     # extract max intensity values from each (top-hat-ed) coding channel at the center coordinates +- 1 pixel
-    spot_intensities_d = np.zeros((9, num_spots, C, R))
-    d = -1
-    for dx in np.array([-1, 0, 1]):
-        for dy in np.array([-1, 0, 1]):
-            d = d + 1
-            for ind_cy in range(R):
-                x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
-                                                   np.around(centers_x[:, ind_cy]).astype('int32') + dx))
-                y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
-                                                   np.around(centers_y[:, ind_cy]).astype('int32') + dy))
-                for ind_ch in range(C):
-                    spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
-    spot_intensities = np.max(spot_intensities_d, axis=0)
+    if len(imgs_coding.shape)<5:
+        spot_intensities_d = np.zeros((9, num_spots, C, R))
+        d = -1
+        for dx in np.array([-1, 0, 1]):
+            for dy in np.array([-1, 0, 1]):
+                d = d + 1
+                for ind_cy in range(R):
+                    x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
+                                                       np.around(centers_x[:, ind_cy]).astype('int32') + dx))
+                    y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
+                                                       np.around(centers_y[:, ind_cy]).astype('int32') + dy))
+                    for ind_ch in range(C):
+                        spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
+        spot_intensities = np.max(spot_intensities_d, axis=0)
+    else:#there is z dimension
+        spot_intensities_d = np.zeros((9, num_spots, C, R))
+        d = -1
+        for dx in np.array([-1, 0, 1]):
+            for dy in np.array([-1, 0, 1]):
+                d = d + 1
+                for ind_cy in range(R):
+                    x_coord = np.maximum(0, np.minimum(imgs_coding.shape[2] - 1,
+                                                       np.around(centers_x[:, ind_cy]).astype('int32') + dx))
+                    y_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
+                                                       np.around(centers_y[:, ind_cy]).astype('int32') + dy))
+                    z_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
+                                                       np.around(centers_z[:, ind_cy]).astype('int32')))
+                    for ind_ch in range(C):
+                        spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[z_coord, y_coord, x_coord, ind_ch, ind_cy]
+        spot_intensities = np.max(spot_intensities_d, axis=0)
+
 
     if compute_also_without_tophat:
         spot_intensities_d = np.zeros((9, num_spots, C, R))
@@ -92,7 +121,8 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
-                                spots_params, ind_cy_move_forward_by=0, anchor_available=True, anchors_cy_ind_for_spot_detect=None, norm_anchors=False, use_blob_detector=False,
+                                spots_params, ind_cy_move_forward_by=0, anchor_available=True,
+                                anchors_cy_ind_for_spot_detect=None, norm_anchors=False, use_blob_detector=False,
                                 compute_also_without_tophat=False):
     # anchors_cy_ind_for_spot_detect can be any number in {0,..,R-1} to indicate if a single frame should be used
     # for spot detection, otherwise by default all cycles are considered for spot detection
@@ -128,11 +158,13 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
                                     tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
                                         ind_ch] + '_c0' + str(
-                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(np.float32)
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(
+                                    np.float32)
                             except:
                                 imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
                                     tifs_path + tiles_info['filename_prefix'] + tile_name + '_c0' + str(
-                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][ind_ch] + '.tif').astype(
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][
+                                        ind_ch] + '.tif').astype(
                                     np.float32)
 
                 imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
@@ -152,8 +184,13 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                             0, 2), 1, 2)
                 else:
                     # if anchor is not available, form "quasi-anchors" from coding channels (already top-hat filtered + normalized)
-                    imgs_coding_tophat_norm = (imgs_coding_tophat-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))/(np.percentile(imgs_coding_tophat, 99.99, axis=(0,1), keepdims=True)-np.min(imgs_coding_tophat,axis=(0,1),keepdims=True))
-                    #imgs_coding_tophat_norm = imgs_coding_tophat # without normalization
+                    imgs_coding_tophat_norm = (imgs_coding_tophat - np.min(imgs_coding_tophat, axis=(0, 1),
+                                                                           keepdims=True)) / (
+                                                      np.percentile(imgs_coding_tophat, 99.99, axis=(0, 1),
+                                                                    keepdims=True) - np.min(imgs_coding_tophat,
+                                                                                            axis=(0, 1),
+                                                                                            keepdims=True))
+                    # imgs_coding_tophat_norm = imgs_coding_tophat # without normalization
                     anchors = np.swapaxes(np.swapaxes(imgs_coding_tophat_norm.max(axis=2), 0, 2), 1, 2)
 
                 anchors = anchors[anchors_cy_ind_for_spot_detect, :,
@@ -182,3 +219,59 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                         columns=['X', 'Y', 'Tile'], index=None)
                     spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
     return spots, spots_loc, spots_notophat#, imgs_coding_tophat
+
+
+def load_tiles(tifs_path, channels_info, C, R, tile_names, tiles_info, tiles_to_load,
+               top_hat_coding=True, diam_tophat=3, ind_cy_move_forward_by=0):
+    B = (tiles_to_load['y_end'] - tiles_to_load['y_start'] + 1) * (
+            tiles_to_load['x_end'] - tiles_to_load['x_start'] + 1)
+    b = -1
+    tiles = np.zeros((B, tiles_info['tile_size'], tiles_info['tile_size'], len(channels_info['channel_names']), R))
+    print('Loading: ', end='')
+    for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
+        for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
+            b = b + 1
+            tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
+            if np.isin(tile_name, tile_names['selected_tile_names']):
+                # load selected tile
+                print(tile_name, end=' ')
+                if x_ind == tiles_info['x_max']:
+                    tile_size_x = tiles_info['x_max_size']
+                else:
+                    tile_size_x = tiles_info['tile_size']
+                if y_ind == tiles_info['y_max']:
+                    tile_size_y = tiles_info['y_max_size']
+                else:
+                    tile_size_y = tiles_info['tile_size']
+
+                imgs = np.zeros((tile_size_y, tile_size_x, len(channels_info['channel_names']), R))
+                for ind_cy in range(R):
+                    for ind_ch in range(len(channels_info['channel_names'])):
+                        if channels_info['channel_names'][ind_ch] != 'DAPI':  # no need for dapi
+                            try:
+                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
+                                    tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
+                                        ind_ch] + '_c0' + str(
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(
+                                    np.float32)
+                            except:
+                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
+                                    tifs_path + tiles_info['filename_prefix'] + tile_name + '_c0' + str(
+                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][
+                                        ind_ch] + '.tif').astype(
+                                    np.float32)
+
+                if top_hat_coding:
+                    imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
+                    # apply top-hat filtering to each coding channel
+                    imgs_coding_tophat = np.zeros_like(imgs_coding)
+                    for ind_cy in range(R):
+                        for ind_ch in range(C):
+                            imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
+                                                                                    disk(diam_tophat))
+
+                    imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :] = imgs_coding_tophat
+
+                tiles[b, 0:tile_size_y, 0:tile_size_x, :, :] = imgs
+
+    return tiles
