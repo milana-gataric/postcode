@@ -44,12 +44,15 @@ def chol_sigma_from_vec(sigma_vec, D):
     return torch.mm(L, torch.t(L))
 
 
-def e_step(data, w, theta, sigma, N, K):
+def e_step(data, w, theta, sigma, N, K):   
     class_probs = torch.ones(N, K)
     for k in range(K):
         dist = MultivariateNormal(theta[k], sigma)
         class_probs[:, k] = w[k] * torch.exp(dist.log_prob(data))
 
+    #dist = MultivariateNormal(theta, sigma.repeat(K,1,1))
+    #class_probs = w.reshape((1,K)) * torch.exp(dist.log_prob(data.unsqueeze(1)))
+    
     class_prob_norm = class_probs.div(torch.sum(class_probs, dim=1, keepdim=True))
     # class_prob_norm[torch.isnan(class_prob_norm)] = 0
     return class_prob_norm
