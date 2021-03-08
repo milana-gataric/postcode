@@ -332,7 +332,8 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         nan_class_ind = np.empty((0,), dtype=np.int32)
         
     class_probs = class_probs_star_s.cpu().numpy()
-    torch.set_default_tensor_type("torch.FloatTensor")
+    if torch.cuda.is_available():
+        torch.set_default_tensor_type("torch.FloatTensor")
 
     class_ind = {'genes': np.arange(K), 'bkg': bkg_ind, 'inf': inf_ind_s, 'nan': nan_class_ind}
     torch_params = {'w_star': w_star.cpu(), 'w_star_mod': w_star_mod.cpu(), 'sigma_star': sigma_star.cpu(), 'theta_star': theta_star.cpu(),
