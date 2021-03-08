@@ -201,12 +201,11 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     # barcodes_01: a numpy array of dim K x C x R
     ##############################
 
-    #     if torch.cuda.is_available():
-    #         dev = "cuda:0"
-    #     else:
-    #           dev = "cpu"
-    #     device = torch.device(dev)
-
+    if torch.cuda.is_available():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    else:
+        torch.set_default_tensor_type("torch.FloatTensor")
+            
     N = spots.shape[0]
     C = spots.shape[1]
     R = spots.shape[2]
@@ -241,12 +240,12 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
             svi = SVI(model_constrained_general, auto_guide_constrained_general, optim,
                       loss=TraceEnum_ELBO(max_plate_nesting=1))
     if up_prc_to_remove < 100:
-        ind_keep = np.where(np.sum(data.numpy() < np.percentile(data.numpy(), up_prc_to_remove, axis=0), axis=1) == D)[
+        ind_keep = np.where(np.sum(data.cpu().numpy() < np.percentile(data.cpu().numpy(), up_prc_to_remove, axis=0), axis=1) == D)[
             0]
     else:
         ind_keep = np.arange(0, N)
-    s = torch.tensor(np.percentile(data[ind_keep, :].numpy(), 60, axis=0))
-    max_s = torch.tensor(np.percentile(data[ind_keep, :].numpy(), 99.9, axis=0))
+    s = torch.tensor(np.percentile(data[ind_keep, :].cpu().numpy(), 60, axis=0))
+    max_s = torch.tensor(np.percentile(data[ind_keep, :].cpu().numpy(), 99.9, axis=0))
     min_s = torch.min(data[ind_keep, :], dim=0).values
     log_add = (s ** 2 - max_s * min_s) / (max_s + min_s - 2 * s)
     log_add = torch.max(-torch.min(data[ind_keep, :], dim=0).values + 1e-10, other=log_add.float())
@@ -254,6 +253,16 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     data_log_mean = data_log[ind_keep, :].mean(dim=0, keepdim=True)
     data_log_std = data_log[ind_keep, :].std(dim=0, keepdim=True)
     data_norm = (data_log - data_log_mean) / data_log_std  # column-wise normalization
+    
+#     if torch.cuda.is_available():
+#         dev = "cuda:0"
+#         torch.set_default_tensor_type('torch.cuda.FloatTensor')
+#     else:
+#         dev = "cpu"
+#     device = torch.device(dev)
+#     codes = codes.to(device)
+#     data_norm = data_norm.to(device)
+    
     # training:
     pyro.set_rng_seed(1)  # seed for reproducibility when N<batch_size
     losses = train(svi, num_iter, data_norm[ind_keep, :], len(ind_keep), D, C, R, codes.shape[0], codes,
@@ -273,6 +282,7 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         theta_consts_v_star = pyro.param('theta_consts_v').detach()
         theta_star = torch.matmul(theta_consts_v_star * codes * codes_tr_v_star + codes_tr_consts_v_star,
             mat_sqrt(sigma_star, D))
+        theta_consts_v_star=theta_consts_v_star.cpu()
     else:
         theta_consts_v_star = None
         theta_star = torch.matmul(codes * codes_tr_v_star + codes_tr_consts_v_star, mat_sqrt(sigma_star, D))
@@ -287,17 +297,18 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     if add_remaining_barcodes_prior > 0:
         barcodes_1234 = np.array([p for p in itertools.product(np.arange(1, C + 1), repeat=R)])  # all possible barcodes
         codes_inf = np.array(torch_format(
-            barcodes_01_from_channels(barcodes_1234, C, R)))  # all possible barcodes in the same format as codes
+            barcodes_01_from_channels(barcodes_1234, C, R)).cpu())  # all possible barcodes in the same format as codes
         codes_inf = np.concatenate((np.zeros((1, D)), codes_inf))  # add the bkg code at the beginning
-        for b in range(codes.shape[0]):  # remove already existing codes
-            r = np.array(codes[b, :], dtype=np.int32)
+        codes_cpu = codes.cpu()
+        for b in range(codes_cpu.shape[0]):  # remove already existing codes
+            r = np.array(codes_cpu[b, :], dtype=np.int32)
             i = np.reshape(np.where(np.all(codes_inf == r, axis=1)), (1,))[0]
             codes_inf = np.delete(codes_inf, i, axis=0)
         if estimate_bkg == False:
-            bkg_ind = codes.shape[0]
-            inf_ind = np.append(inf_ind, codes.shape[0] + 1 + np.arange(codes_inf.shape[0]))
+            bkg_ind = codes_cpu.shape[0]
+            inf_ind = np.append(inf_ind, codes_cpu.shape[0] + 1 + np.arange(codes_inf.shape[0]))
         else:
-            inf_ind = np.append(inf_ind, codes.shape[0] + np.arange(codes_inf.shape[0]))
+            inf_ind = np.append(inf_ind, codes_cpu.shape[0] + np.arange(codes_inf.shape[0]))
         codes_inf = torch.tensor(codes_inf).float()
         alpha = (1 - add_remaining_barcodes_prior)
         w_star_all = torch.cat(
@@ -307,21 +318,25 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
                 w_star_all.shape[0], 1), mat_sqrt(sigma_star, D)), sigma_star, N, w_star_all.shape[0])
     else:
         class_probs_star = e_step(data_norm, w_star_mod, theta_star, sigma_star, N, codes.shape[0])
+    #reducing dimensions
+    class_probs_star_s = torch.cat((torch.cat((class_probs_star[:,0:K], class_probs_star[:,bkg_ind].reshape((N,1))),dim=1), torch.sum(class_probs_star[:,inf_ind],dim=1).reshape((N,1))),dim=1)
+    inf_ind_s = inf_ind[0]
     # adding another class if there are NaNs
-    nan_spot_ind = torch.unique((torch.isnan(class_probs_star)).nonzero(as_tuple=False)[:, 0])
+    nan_spot_ind = torch.unique((torch.isnan(class_probs_star_s)).nonzero(as_tuple=False)[:, 0])
     if nan_spot_ind.shape[0] > 0:
-        nan_class_ind = class_probs_star.shape[1]
-        class_probs_star = torch.cat((class_probs_star, torch.zeros((class_probs_star.shape[0], 1))), dim=1)
-        class_probs_star[nan_spot_ind, :] = 0
-        class_probs_star[nan_spot_ind, nan_class_ind] = 1
+        nan_class_ind = class_probs_star_s.shape[1]
+        class_probs_star_s = torch.cat((class_probs_star_s, torch.zeros((class_probs_star_s.shape[0], 1))), dim=1)
+        class_probs_star_s[nan_spot_ind, :] = 0
+        class_probs_star_s[nan_spot_ind, nan_class_ind] = 1
     else:
         nan_class_ind = np.empty((0,), dtype=np.int32)
+        
+    class_probs = class_probs_star_s.cpu().numpy()
+    torch.set_default_tensor_type("torch.FloatTensor")
 
-    class_probs = class_probs_star.numpy()
-
-    class_ind = {'genes': np.arange(K), 'bkg': bkg_ind, 'inf': inf_ind, 'nan': nan_class_ind}
-    torch_params = {'w_star': w_star, 'w_star_mod': w_star_mod, 'sigma_star': sigma_star, 'theta_star': theta_star,
-                    'codes_tr_consts_v_star': codes_tr_consts_v_star, 'codes_tr_v_star': codes_tr_v_star,
+    class_ind = {'genes': np.arange(K), 'bkg': bkg_ind, 'inf': inf_ind_s, 'nan': nan_class_ind}
+    torch_params = {'w_star': w_star.cpu(), 'w_star_mod': w_star_mod.cpu(), 'sigma_star': sigma_star.cpu(), 'theta_star': theta_star.cpu(),
+                    'codes_tr_consts_v_star': codes_tr_consts_v_star.cpu(), 'codes_tr_v_star': codes_tr_v_star.cpu(),
                     'theta_consts_v_star': theta_consts_v_star,
                     'losses': losses}
     norm_const = {'log_add': log_add, 'data_log_mean': data_log_mean, 'data_log_std': data_log_std}
