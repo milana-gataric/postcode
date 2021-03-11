@@ -10,7 +10,7 @@ import scipy
 # functions for detecting and extracting spots from registered images required prior to decoding
 def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None,
                              compute_also_without_tophat=False, norm_anchors=False, use_blob_detector=False,
-                             correct_reg_via_trackpy=False, correct_reg_detect_in_all = True,
+                             correct_reg_via_trackpy=False, correct_reg_detect_in_all = True, after_correction_decrease_sep_by=0,
                              trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64, trackpy_sep=None):
     ###############
     # detects spots using images passed via variable 'anchors' (can be a single (2d) image or R/R+1 2d/3d frames) and
@@ -18,8 +18,8 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
     ###############
     # correct_reg_via_trackpy corrects for imperfect registration by shifting 2d images in cycles >= 1 by a median x-y-offset to anchors[0,:,:]
     ###############
-    med_dx=np.empty(anchors.shape[0]).astype(np.int32)
-    med_dy=np.empty(anchors.shape[0]).astype(np.int32)
+    med_dx=np.zeros(anchors.shape[0]).astype('int32') 
+    med_dy=np.zeros(anchors.shape[0]).astype('int32') 
     if use_blob_detector:
         norm_anchors = True
     trackpy.quiet(suppress=True)
@@ -83,11 +83,13 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
                     centers_y[i, :] = np.array(tracks[tracks['particle'] == id_particle]['y'])
                     centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
             if not correct_reg_detect_in_all:# collect coordinates setected in anchors[0,:,:]
-                #locs = trackpy.locate(anchors[0,:,:], diameter=trackpy_diam_detect, percentile=trackpy_prc)
-                #locs_y = np.array(locs['y'])
-                #locs_x = np.array(locs['x'])
-                locs_y = np.array(tracks['y'][tracks['frame'] == 0])
-                locs_x = np.array(tracks['x'][tracks['frame'] == 0])
+                if after_correction_decrease_sep_by > 0:
+                    locs = trackpy.locate(anchors[0,:,:], diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_diam_detect+1-after_correction_decrease_sep_by)
+                    locs_y = np.array(locs['y'])
+                    locs_x = np.array(locs['x'])
+                else:
+                    locs_y = np.array(tracks['y'][tracks['frame'] == 0])
+                    locs_x = np.array(tracks['x'][tracks['frame'] == 0])
                 num_spots = locs_y.shape[0]
                 centers_y = np.repeat(locs_y.reshape((num_spots, 1)), anchors.shape[0], axis=1)
                 centers_x = np.repeat(locs_x.reshape((num_spots, 1)), anchors.shape[0], axis=1)
@@ -101,7 +103,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
             locs_y = locs[:, 0]
             locs_x = locs[:, 1]
         else:
-            locs = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc)
+            locs = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_sep)
             locs_y = np.array(locs['y'])
             locs_x = np.array(locs['x'])
         num_spots = locs.shape[0]
@@ -119,34 +121,19 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
       
     # extract max intensity values from each (top-hat-ed) coding channel at the center coordinates +- 1 pixel
     if len(imgs_coding.shape)<5:
-        if correct_reg_via_trackpy:
-            spot_intensities_d = np.zeros((9, num_spots, C, R))
-            d = -1
-            for dx in np.array([-1, 0, 1]):
-                for dy in np.array([-1, 0, 1]):
-                    d = d + 1
-                    for ind_cy in range(R):
-                        x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
-                                                           np.around(centers_x[:, ind_cy]).astype('int32') - med_dx[ind_cy] + dx))
-                        y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
-                                                           np.around(centers_y[:, ind_cy]).astype('int32') - med_dy[ind_cy] + dy))
-                        for ind_ch in range(C):
-                            spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
-            spot_intensities = np.max(spot_intensities_d, axis=0)
-        else:
-            spot_intensities_d = np.zeros((9, num_spots, C, R))
-            d = -1
-            for dx in np.array([-1, 0, 1]):
-                for dy in np.array([-1, 0, 1]):
-                    d = d + 1
-                    for ind_cy in range(R):
-                        x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
-                                                           np.around(centers_x[:, ind_cy]).astype('int32') + dx))
-                        y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
-                                                           np.around(centers_y[:, ind_cy]).astype('int32') + dy))
-                        for ind_ch in range(C):
-                            spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
-            spot_intensities = np.max(spot_intensities_d, axis=0)
+        spot_intensities_d = np.zeros((9, num_spots, C, R))
+        d = -1
+        for dx in np.array([-1, 0, 1]):
+            for dy in np.array([-1, 0, 1]):
+                d = d + 1
+                for ind_cy in range(R):
+                    x_coord = np.maximum(0, np.minimum(imgs_coding.shape[1] - 1,
+                                                       np.around(centers_x[:, ind_cy]).astype('int32') - med_dx[ind_cy] + dx))
+                    y_coord = np.maximum(0, np.minimum(imgs_coding.shape[0] - 1,
+                                                       np.around(centers_y[:, ind_cy]).astype('int32') - med_dy[ind_cy] + dy))
+                    for ind_ch in range(C):
+                        spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_coding[y_coord, x_coord, ind_ch, ind_cy]
+        spot_intensities = np.max(spot_intensities_d, axis=0)
     else:#there is z dimension
         spot_intensities_d = np.zeros((9, num_spots, C, R))
         d = -1
@@ -173,9 +160,9 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
                 d = d + 1
                 for ind_cy in range(R):
                     x_coord = np.maximum(0, np.minimum(imgs_also_without_tophat.shape[1] - 1,
-                                                       np.around(centers_x[:, ind_cy]).astype('int32') + dx))
+                                                       np.around(centers_x[:, ind_cy]).astype('int32') - med_dx[ind_cy] + dx))
                     y_coord = np.maximum(0, np.minimum(imgs_also_without_tophat.shape[0] - 1,
-                                                       np.around(centers_y[:, ind_cy]).astype('int32') + dy))
+                                                       np.around(centers_y[:, ind_cy]).astype('int32') - med_dy[ind_cy] + dy))
                     for ind_ch in range(C):
                         spot_intensities_d[d, :, ind_ch, ind_cy] = imgs_also_without_tophat[
                             y_coord, x_coord, ind_ch, ind_cy]
@@ -192,6 +179,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 use_ref_anchor=False,
                                 correct_reg_via_trackpy=False, 
                                 correct_reg_detect_in_all=False, #relevant only when correct_reg_via_trackpy=True; if False keeps the spots from the first frame passed to the spot detection function after registration correction, and if True, it links the spots after correction
+                                after_correction_decrease_sep_by=0,
                                 anchors_cy_ind_for_spot_detect=None, #which anchors to pass to spot detection (all by default, should be all when correct_reg_via_trackpy=True)
                                 norm_anchors=False, use_blob_detector=False,
                                 compute_also_without_tophat=False):
@@ -203,6 +191,8 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
     spots_loc = pd.DataFrame(columns=['X', 'Y', 'Tile'])
     if not ('trackpy_prc' in spots_params):
         spots_params['trackpy_prc'] = 64
+    if not ('trackpy_sep' in spots_params):
+        spots_params['trackpy_sep'] = None
     if anchors_cy_ind_for_spot_detect is None:
         if use_ref_anchor:
             anchors_cy_ind_for_spot_detect = np.arange(R+1)
@@ -295,9 +285,11 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                                                                 use_blob_detector,
                                                                                 correct_reg_via_trackpy,
                                                                                 correct_reg_detect_in_all,
+                                                                                after_correction_decrease_sep_by,
                                                                                 spots_params['trackpy_diam_detect'],
                                                                                 spots_params['trackpy_search_range'],
-                                                                                spots_params['trackpy_prc'])
+                                                                                spots_params['trackpy_prc'],
+                                                                                spots_params['trackpy_sep'])
                 N_i = spots_i.shape[0]
                 if N_i > 0:
                     spots = np.concatenate((spots, spots_i))
