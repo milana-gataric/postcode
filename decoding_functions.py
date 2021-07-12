@@ -195,6 +195,7 @@ def train(svi, num_iterations, data, N, D, C, R, K, codes, print_training_progre
 def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_to_remove=99.95, cov_tensor=True,
                       probe_ef=False,
                       estimate_bkg=True, estimate_additional_barcodes=None, add_remaining_barcodes_prior=0.05,
+                      modify_prior=True,
                       print_training_progress=True):
     ##############################
     # spots: a numpy array of dim N x C x R;
@@ -272,7 +273,9 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
     if cov_tensor:
         sigma_ch_v_star = pyro.param('sigma_ch_v').detach()
         sigma_ro_v_star = pyro.param('sigma_ro_v').detach()
-        sigma_star = kronecker_product(chol_sigma_from_vec(sigma_ro_v_star, R), chol_sigma_from_vec(sigma_ch_v_star, C))
+        sigma_ro_star = chol_sigma_from_vec(sigma_ro_v_star, R)
+        sigma_ch_star = chol_sigma_from_vec(sigma_ch_v_star, C)
+        sigma_star = kronecker_product(sigma_ro_star, sigma_ch_star)
     else:
         sigma_v_star = pyro.param('sigma_v').detach()  # if using generic class covariance
         sigma_star = chol_sigma_from_vec(sigma_v_star, D)
@@ -288,12 +291,14 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         theta_star = torch.matmul(codes * codes_tr_v_star + codes_tr_consts_v_star, mat_sqrt(sigma_star, D))
 
     # computing class probabilities with appropriate priors
-    if w_star.shape[0] > K:  # making sure that the K barcode classes have higher prior in case there are more than K classes
+    if modify_prior and (w_star.shape[0] > K):  # making sure that the K barcode classes have higher prior in case there are more than K classes
         w_star_mod = torch.cat((w_star[0:K], w_star[0:K].min().repeat(w_star.shape[0] - K)))
-        # w_star_mod = torch.cat((K/w_star.shape[0]*w_star[0:K], (w_star.shape[0]-K)/w_star.shape[0]*w_star[K:].reshape(w_star[K:].shape[0],)))#originaly used this
+        #w_star_mod = torch.cat((K/w_star.shape[0]*1/w_star[0:K].sum()*w_star[0:K], 1/w_star.shape[0]*1/w_star[K:].sum()*w_star[K:]))#uniform prior for each out of w_star.shape[0] classes
+        #w_star_mod = torch.cat((K/w_star.shape[0]*w_star[0:K], (w_star.shape[0]-K)/w_star.shape[0]*w_star[K:].reshape(w_star[K:].shape[0],)))#first time used this
         w_star_mod = w_star_mod / w_star_mod.sum()
     else:
         w_star_mod = w_star
+
     if add_remaining_barcodes_prior > 0:
         barcodes_1234 = np.array([p for p in itertools.product(np.arange(1, C + 1), repeat=R)])  # all possible barcodes
         codes_inf = np.array(torch_format(
@@ -302,8 +307,9 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         codes_cpu = codes.cpu()
         for b in range(codes_cpu.shape[0]):  # remove already existing codes
             r = np.array(codes_cpu[b, :], dtype=np.int32)
-            i = np.reshape(np.where(np.all(codes_inf == r, axis=1)), (1,))[0]
-            codes_inf = np.delete(codes_inf, i, axis=0)
+            if np.where(np.all(codes_inf == r, axis=1))[0].shape[0]!=0:
+                i = np.reshape(np.where(np.all(codes_inf == r, axis=1)), (1,))[0]
+                codes_inf = np.delete(codes_inf, i, axis=0)
         if estimate_bkg == False:
             bkg_ind = codes_cpu.shape[0]
             inf_ind = np.append(inf_ind, codes_cpu.shape[0] + 1 + np.arange(codes_inf.shape[0]))
@@ -336,9 +342,10 @@ def decoding_function(spots, barcodes_01, num_iter=60, batch_size=15000, up_prc_
         torch.set_default_tensor_type("torch.FloatTensor")
 
     class_ind = {'genes': np.arange(K), 'bkg': bkg_ind, 'inf': inf_ind_s, 'nan': nan_class_ind}
-    torch_params = {'w_star': w_star.cpu(), 'w_star_mod': w_star_mod.cpu(), 'sigma_star': sigma_star.cpu(), 'theta_star': theta_star.cpu(),
-                    'codes_tr_consts_v_star': codes_tr_consts_v_star.cpu(), 'codes_tr_v_star': codes_tr_v_star.cpu(),
-                    'theta_consts_v_star': theta_consts_v_star,
+    torch_params = {'w_star': w_star.cpu(), 'w_star_mod': w_star_mod.cpu(), 'sigma_star': sigma_star.cpu(),
+                    'sigma_ro_star': sigma_ro_star.cpu(), 'sigma_ch_star': sigma_ch_star.cpu(),
+                    'theta_star': theta_star.cpu(), 'codes_tr_consts_v_star': codes_tr_consts_v_star.cpu(),
+                    'codes_tr_v_star': codes_tr_v_star.cpu(), 'theta_consts_v_star': theta_consts_v_star,
                     'losses': losses}
     norm_const = {'log_add': log_add, 'data_log_mean': data_log_mean, 'data_log_std': data_log_std}
 

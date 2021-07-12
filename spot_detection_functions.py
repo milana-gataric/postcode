@@ -4,6 +4,7 @@ import tifffile
 import trackpy
 from skimage.morphology import white_tophat, disk
 from skimage.feature import blob_log
+from skimage.restoration import denoise_wavelet
 import scipy
 import multiprocessing
 from joblib import Parallel, delayed
@@ -179,6 +180,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
                                 spots_params, ind_cy_move_forward_by=0, anchor_available=True, fake_anchor_prc=95, 
                                 fake_anchor_gauss_sigma=None, fake_anchor_from_top_hat=False, anchors_top_hat=False,
+                                anchor_gauss_sigma=None,anchor_wave_denoise=False,
                                 use_ref_anchor=False,
                                 correct_reg_via_trackpy=False, 
                                 correct_reg_detect_in_all=False, #relevant only when correct_reg_via_trackpy=True; if False keeps the spots from the first frame passed to the spot detection function after registration correction, and if True, it links the spots after correction
@@ -281,6 +283,15 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                     if anchors_top_hat:
                         for r in range(anchors.shape[0]):
                             anchors[r,:,:] = white_tophat(anchors[r,:,:],disk(spots_params['spot_diam_tophat'])) 
+                            
+                if not anchor_gauss_sigma is None:
+                    for r in range(anchors.shape[0]):
+                        anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], anchor_gauss_sigma[r])
+                        
+                if anchor_wave_denoise:
+                    for r in range(anchors.shape[0]):
+                        anchors[r,:,:] = denoise_wavelet(anchors[r,:,:].astype(np.uint16), sigma=0.001, wavelet='db4')*1000
+                    
 
                 anchors = anchors[anchors_cy_ind_for_spot_detect, :,
                           :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
@@ -318,6 +329,7 @@ def load_tiles_to_extract_spots_parallel(tifs_path, channels_info, C, R,
                                         tile_names, tiles_info, tiles_to_load,
                                         spots_params, ind_cy_move_forward_by=0, anchor_available=True, fake_anchor_prc=95, 
                                         fake_anchor_gauss_sigma=None, fake_anchor_from_top_hat=False, anchors_top_hat=False,
+                                        anchor_gauss_sigma=None,
                                         use_ref_anchor=False,
                                         correct_reg_via_trackpy=False, 
                                         correct_reg_detect_in_all=False, #relevant only when correct_reg_via_trackpy=True; if False keeps the spots from the first frame passed to the spot detection function after registration correction, and if True, it links the spots after correction
@@ -399,6 +411,11 @@ def load_tiles_to_extract_spots_parallel(tifs_path, channels_info, C, R,
                 for r in range(anchors.shape[0]):
                     anchors[r,:,:] = white_tophat(anchors[r,:,:],disk(spots_params['spot_diam_tophat'])) 
 
+                    
+        if not anchor_gauss_sigma is None:
+                for r in range(anchors.shape[0]):
+                    anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], anchor_gauss_sigma[r])
+                    
         anchors = anchors[anchors_cy_ind_for_spot_detect, :, :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
 
         # detect and extract spots from the loaded tile
