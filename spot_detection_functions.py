@@ -11,8 +11,8 @@ from joblib import Parallel, delayed
 
 
 # functions for detecting and extracting spots from registered images required prior to decoding
-def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None,
-                             compute_also_without_tophat=False, norm_anchors=False, use_blob_detector=False,
+def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_tophat=None, 
+                             compute_also_without_tophat=False, compute_sigmas=False, norm_anchors=False, use_blob_detector=False,
                              correct_reg_via_trackpy=False, correct_reg_detect_in_all = True, 
                              after_correction_decrease_sep_by=0, after_correction_decrease_prc_by=0,
                              trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64, trackpy_sep=None):
@@ -116,6 +116,10 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
     centers_c01 = np.transpose(
         np.stack((centers_x[:, 0], centers_y[:, 0])))  # equivalent to the centers in matlab if + 1
+    if compute_sigmas: #can do only when using trackpy in a single anchor frame
+        sigmas_01=np.array(locs['size'])
+    else:
+        sigmas_01=None
 
     if (len(anchors.shape) > 2) and (anchors.shape[0]>R):#there are multiple frames and a reference cycle inserted at the beginning, so remove it before extraction
         centers_x = centers_x[:,1:]
@@ -173,7 +177,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
         spot_intensities_notophat = np.max(spot_intensities_d, axis=0)
     else:
         spot_intensities_notophat = None
-    return spot_intensities, centers_c01, spot_intensities_notophat#, med_dx, med_dy#, centers_x, centers_y
+    return spot_intensities, centers_c01, spot_intensities_notophat, sigmas_01#, med_dx, med_dy#, centers_x, centers_y
 
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
@@ -187,13 +191,16 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 after_correction_decrease_sep_by=0, after_correction_decrease_prc_by=0,
                                 anchors_cy_ind_for_spot_detect=None, #which anchors to pass to spot detection (all by default, should be all when correct_reg_via_trackpy=True)
                                 norm_anchors=False, use_blob_detector=False,
-                                compute_also_without_tophat=False):
+                                compute_also_without_tophat=False,compute_sigmas=False):
     # anchors_cy_ind_for_spot_detect can be any number in {0,..,R-1} to indicate if a single frame should be used
     # for spot detection, otherwise by default all cycles are considered for spot detection
 
     spots = np.empty((0, C, R))
     spots_notophat = np.empty((0, C, R))
-    spots_loc = pd.DataFrame(columns=['X', 'Y', 'Tile'])
+    if compute_sigmas:
+        spots_loc = pd.DataFrame(columns=['X', 'Y', 'Sigma', 'Tile'])
+    else:
+        spots_loc = pd.DataFrame(columns=['X', 'Y', 'Tile'])
     if not ('trackpy_prc' in spots_params):
         spots_params['trackpy_prc'] = 64
     if not ('trackpy_sep' in spots_params):
@@ -297,9 +304,10 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                           :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
 
                 # detect and extract spots from the loaded tile
-                spots_i, centers_i, spots_notophat_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
+                spots_i, centers_i, spots_notophat_i, sigmas_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
                                                                                 imgs_coding,
                                                                                 compute_also_without_tophat,
+                                                                                compute_sigmas,
                                                                                 norm_anchors,
                                                                                 use_blob_detector,
                                                                                 correct_reg_via_trackpy,
@@ -319,9 +327,14 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                     X = (x_ind - tiles_to_load['x_start']) * tiles_info['tile_size'] + centers_i[:, 0]
                     Y = (y_ind - tiles_to_load['y_start']) * tiles_info['tile_size'] + centers_i[:, 1]
                     Tile = np.tile(np.array([tile_name]), N_i)
-                    spots_loc_i = pd.DataFrame(
-                        np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
-                        columns=['X', 'Y', 'Tile'], index=None)
+                    if compute_sigmas:
+                        spots_loc_i = pd.DataFrame(
+                            np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), sigmas_i.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
+                            columns=['X', 'Y', 'Sigma', 'Tile'], index=None)
+                    else:
+                        spots_loc_i = pd.DataFrame(
+                            np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
+                            columns=['X', 'Y', 'Tile'], index=None)
                     spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
     return spots, spots_loc, spots_notophat#, imgs_coding_tophat
 
