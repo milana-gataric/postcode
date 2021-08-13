@@ -8,4 +8,8 @@ example of how the code can be used to decode a
 ISS mouse brain dataset.
 
 The code has been tested with python 3.6.12 and its requirements can be
-fulfilled by running `python3 -m pip install -r requirements.txt`
+fulfilled by running
+```
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+```
