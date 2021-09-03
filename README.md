@@ -1,9 +1,12 @@
+##PoSTcode
+
 This code implements probabilistic decoding of image-based spatial
-transcriptomics via a novel re-parametrized Gaussian Mixture Model (GMM)
-implemented using stochastic variational inference in [pyro](https://pyro.ai/).
+transcriptomics via a re-parametrized matrix-variate Gaussian mixture model,
+implemented using stochastic variational inference in [pyro](https://pyro.ai/). 
+The method implemented here is described in the paper ["PoSTcode: Probabilistic image-based spatial transcriptomics decoder"]().
 
 To get started, please explore the Jupyter Notebook
-[example_iss_mousebrain.ipynb](example_iss_mousebrain.ipynb), which provides an
+[example_iss_mousebrain.ipynb](notebooks/example_iss_mousebrain.ipynb), which provides an
 example of how the code can be used to decode a
 ISS mouse brain dataset.
 
