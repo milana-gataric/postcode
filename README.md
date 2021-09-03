@@ -1,4 +1,4 @@
-##PoSTcode
+## PoSTcode
 
 This code implements probabilistic decoding of image-based spatial
 transcriptomics via a re-parametrized matrix-variate Gaussian mixture model,
