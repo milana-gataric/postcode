@@ -13,7 +13,6 @@ from pyro.infer.autoguide import AutoDelta
 
 assert pyro.__version__.startswith('1')
 
-
 # auxiliary functions required for decoding
 def torch_format(numpy_array):
     D = numpy_array.shape[1] * numpy_array.shape[2]
@@ -44,15 +43,17 @@ def chol_sigma_from_vec(sigma_vec, D):
     return torch.mm(L, torch.t(L))
 
 
-def e_step(data, w, theta, sigma, N, K):   
+def e_step(data, w, theta, sigma, N, K, print_training_progress):
     class_probs = torch.ones(N, K)
-    for k in range(K):
-        dist = MultivariateNormal(theta[k], sigma)
-        class_probs[:, k] = w[k] * torch.exp(dist.log_prob(data))
+    if print_training_progress:
+        for k in tqdm(range(K)):
+            dist = MultivariateNormal(theta[k], sigma)
+            class_probs[:, k] = w[k] * torch.exp(dist.log_prob(data))
+    else:
+        for k in range(K):
+            dist = MultivariateNormal(theta[k], sigma)
+            class_probs[:, k] = w[k] * torch.exp(dist.log_prob(data))
 
-    #dist = MultivariateNormal(theta, sigma.repeat(K,1,1))
-    #class_probs = w.reshape((1,K)) * torch.exp(dist.log_prob(data.unsqueeze(1)))
-    
     class_prob_norm = class_probs.div(torch.sum(class_probs, dim=1, keepdim=True))
     # class_prob_norm[torch.isnan(class_prob_norm)] = 0
     return class_prob_norm
@@ -122,6 +123,9 @@ def decoding_function(spots, barcodes_01,
     # barcodes_01: a numpy array of dim K x C x R (number of barcodes x coding channels x rounds)
     ##############################
 
+    # torch.manual_seed(set_seed)
+    # random.seed(set_seed)
+    # np.random.seed(set_seed)
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
@@ -212,9 +216,10 @@ def decoding_function(spots, barcodes_01,
         alpha = (1 - add_remaining_barcodes_prior)
         w_star_all = torch.cat((alpha * w_star_mod, torch.tensor((1 - alpha) / codes_inf.shape[0]).repeat(codes_inf.shape[0])))
         class_probs_star = e_step(data_norm, w_star_all,
-                                  torch.matmul(torch.cat((codes, codes_inf)) * codes_tr_v_star + codes_tr_consts_v_star.repeat(w_star_all.shape[0], 1), mat_sqrt(sigma_star, D)), sigma_star, N, w_star_all.shape[0])
+                                  torch.matmul(torch.cat((codes, codes_inf)) * codes_tr_v_star + codes_tr_consts_v_star.repeat(w_star_all.shape[0], 1), mat_sqrt(sigma_star, D)), sigma_star, N, w_star_all.shape[0],
+                                  print_training_progress)
     else:
-        class_probs_star = e_step(data_norm, w_star_mod, theta_star, sigma_star, N, codes.shape[0])
+        class_probs_star = e_step(data_norm, w_star_mod, theta_star, sigma_star, N, codes.shape[0], print_training_progress)
 
     # collapsing added barcodes
     class_probs_star_s = torch.cat((torch.cat((class_probs_star[:, 0:K], class_probs_star[:, bkg_ind].reshape((N, 1))), dim=1), torch.sum(class_probs_star[:, inf_ind], dim=1).reshape((N, 1))), dim=1)
@@ -247,14 +252,42 @@ def decoding_function(spots, barcodes_01,
 def decoding_output_to_dataframe(out, df_class_names, df_class_codes):
     val = out['class_probs'].max(axis=1)
     ind = out['class_probs'].argmax(axis=1)
-    decoded = ind + 1
     K = len(out['class_ind']['genes'])
+    decoded = ind + 1
     decoded[np.isin(ind, out['class_ind']['inf'])] = K + 1  # inf class
     decoded[np.isin(ind, out['class_ind']['bkg'])] = K + 2  # bkg class
     decoded[np.isin(ind, out['class_ind']['nan'])] = K + 3  # NaN class
-    Name = df_class_names[decoded - 1]
-    Code = df_class_codes[decoded - 1]
-    Probability = val
-    df_data = np.concatenate((Name.reshape((val.shape[0], 1)), Code.reshape((val.shape[0], 1)), Probability.reshape((val.shape[0], 1))), axis=1)
-    decoded_spots_df = pd.DataFrame(df_data, columns=['Name', 'Code', 'Probability'])
+    decoded_spots_df = pd.DataFrame(columns=['Name', 'Code', 'Probability'])
+    decoded_spots_df['Name'] = df_class_names[decoded-1]
+    decoded_spots_df['Code'] = df_class_codes[decoded-1]
+    decoded_spots_df['Probability'] = val
     return decoded_spots_df
+
+
+# function creating a heatmap for plotting spatial patterns
+def heatmap_pattern(decoded_df,name,grid=150, thr=0.7,plot_probs=True):
+    if not 'Probability' in decoded_df.columns:
+        if not 'Score' in decoded_df.columns:
+            plot_probs = False
+            x_coord = np.floor(decoded_df.X[(decoded_df.Name == name)].to_numpy(dtype=np.double) / grid).astype(np.int32)
+            y_coord = np.floor(decoded_df.Y[(decoded_df.Name == name)].to_numpy(dtype=np.double) / grid).astype(np.int32)
+        else:
+            x_coord = np.floor(decoded_df.X[(decoded_df.Name == name) & (decoded_df.Score > thr)].to_numpy(dtype=np.double) / grid).astype(np.int32)
+            y_coord = np.floor(decoded_df.Y[(decoded_df.Name == name) & (decoded_df.Score > thr)].to_numpy(dtype=np.double) / grid).astype(np.int32)
+    else:
+        x_coord = np.floor(decoded_df.X[(decoded_df.Name == name) & (decoded_df.Probability >thr)].to_numpy(dtype=np.double)/grid).astype(np.int32)
+        y_coord = np.floor(decoded_df.Y[(decoded_df.Name == name) & (decoded_df.Probability >thr)].to_numpy(dtype=np.double)/grid).astype(np.int32)
+    H = np.zeros((int(np.ceil(decoded_df.Y.to_numpy(dtype=np.double).max()/grid)),int(np.ceil(decoded_df.X.to_numpy(dtype=np.double).max()/grid))))
+    if plot_probs:
+        if 'Probability' in decoded_df.columns:
+            prob = decoded_df.Probability[decoded_df.Name == name].to_numpy(dtype=np.double)
+        elif 'Score' in decoded_df.columns:
+            prob = decoded_df.Score[decoded_df.Name == name].to_numpy(dtype=np.double)
+        prob[prob<thr]=0
+        for i in range(len(x_coord)):
+            H[y_coord[i],x_coord[i]] = H[y_coord[i],x_coord[i]] + prob[i]
+    else:
+        coords = np.concatenate((y_coord.reshape((len(x_coord),1)),x_coord.reshape((len(x_coord),1))), axis=1)
+        coords_u ,coords_c = np.unique(coords ,axis=0, return_counts=True)
+        H[coords_u[:,0],coords_u[:,1]]=coords_c
+    return H

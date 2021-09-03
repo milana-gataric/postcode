@@ -6,6 +6,7 @@ from skimage.morphology import white_tophat, disk
 from skimage.feature import blob_log
 from skimage.restoration import denoise_wavelet
 import scipy
+from tqdm import tqdm
 import multiprocessing
 from joblib import Parallel, delayed
 
@@ -15,7 +16,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
                              compute_also_without_tophat=False, compute_sigmas=False, norm_anchors=False, use_blob_detector=False,
                              correct_reg_via_trackpy=False, correct_reg_detect_in_all = True, 
                              after_correction_decrease_sep_by=0, after_correction_decrease_prc_by=0,
-                             trackpy_diam_detect=5, trackpy_search_range=3, trackpy_prc=64, trackpy_sep=None):
+                             trackpy_spot_diam=5, trackpy_search_range=3, trackpy_prc=64, trackpy_sep=None):
     ###############
     # detects spots using images passed via variable 'anchors' (can be a single (2d) image or R/R+1 2d/3d frames) and
     # extracts detected spots using CxR images passed via 'imgs_coding'
@@ -32,7 +33,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
         if norm_anchors:
             anchors = (anchors - np.mean(anchors, axis=(-2, -1), keepdims=True)) / np.std(anchors, axis=(-2, -1),
                                                                                         keepdims=True)
-        tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_sep),
+        tracks = trackpy.link_df(trackpy.batch(anchors, diameter=trackpy_spot_diam, percentile=trackpy_prc, separation=trackpy_sep),
                                  search_range=trackpy_search_range)
         # find spots appearing in all cycles
         spots_id_all_anchors = tracks['particle'][tracks['frame'] == 0].unique()
@@ -70,7 +71,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
                 for r in range(anchors.shape[0]):
                     anchors_shifted[r,:,:] = anchors_expand[r,dy_max-med_dy[r]:anchors.shape[1]+dy_max-med_dy[r],dx_max-med_dx[r]:anchors.shape[2]+dx_max-med_dx[r]]
                 ##detect and link spots in shifted anchors
-                tracks = trackpy.link_df(trackpy.batch(anchors_shifted, diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_sep),
+                tracks = trackpy.link_df(trackpy.batch(anchors_shifted, diameter=trackpy_spot_diam, percentile=trackpy_prc, separation=trackpy_sep),
                                              search_range=trackpy_search_range)
                 # find spots appearing in all cycles
                 spots_id_all_anchors = tracks['particle'][tracks['frame'] == 0].unique()
@@ -88,7 +89,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
                     centers_x[i, :] = np.array(tracks[tracks['particle'] == id_particle]['x'])
             if not correct_reg_detect_in_all:# collect coordinates setected in anchors[0,:,:]
                 if (after_correction_decrease_sep_by > 0) or (after_correction_decrease_prc_by > 0):
-                    locs = trackpy.locate(anchors[0,:,:], diameter=trackpy_diam_detect, percentile=trackpy_prc-after_correction_decrease_prc_by, separation=trackpy_diam_detect+1-after_correction_decrease_sep_by)
+                    locs = trackpy.locate(anchors[0,:,:], diameter=trackpy_spot_diam, percentile=trackpy_prc-after_correction_decrease_prc_by, separation=trackpy_spot_diam+1-after_correction_decrease_sep_by)
                     locs_y = np.array(locs['y'])
                     locs_x = np.array(locs['x'])
                 else:
@@ -102,12 +103,12 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
         if norm_anchors:
             anchors = (anchors - anchors.mean()) / anchors.std()
         if use_blob_detector:
-            locs = blob_log(anchors, min_sigma=trackpy_diam_detect / 2, max_sigma=3 / 2 * trackpy_diam_detect,
+            locs = blob_log(anchors, min_sigma=trackpy_spot_diam / 2, max_sigma=3 / 2 * trackpy_spot_diam,
                             num_sigma=11, threshold=0.25)
             locs_y = locs[:, 0]
             locs_x = locs[:, 1]
         else:
-            locs = trackpy.locate(anchors, diameter=trackpy_diam_detect, percentile=trackpy_prc, separation=trackpy_sep)
+            locs = trackpy.locate(anchors, diameter=trackpy_spot_diam, percentile=trackpy_prc, separation=trackpy_sep)
             locs_y = np.array(locs['y'])
             locs_x = np.array(locs['x'])
         num_spots = locs.shape[0]
@@ -203,139 +204,147 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
         spots_loc = pd.DataFrame(columns=['X', 'Y', 'Tile'])
     if not ('trackpy_prc' in spots_params):
         spots_params['trackpy_prc'] = 64
+    if not ('trackpy_search_range' in spots_params):
+        spots_params['trackpy_search_range'] = 3
     if not ('trackpy_sep' in spots_params):
         spots_params['trackpy_sep'] = None
+    if not ('spot_diam_tophat' in spots_params):
+        spots_params['spot_diam_tophat'] = spots_params['trackpy_spot_diam']
     if anchors_cy_ind_for_spot_detect is None:
         if use_ref_anchor:
             anchors_cy_ind_for_spot_detect = np.arange(R+1)
         else:
             anchors_cy_ind_for_spot_detect = np.arange(R)
-    print('Extracting spots from: ', end='')
+    y_x_ind = []
     for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
         for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
-            tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
-            if np.isin(tile_name, tile_names['selected_tile_names']):
-                # load selected tile
-                print(tile_name, end=' ')
-                if x_ind == tiles_info['x_max']:
-                    tile_size_x = tiles_info['x_max_size']
-                else:
-                    tile_size_x = tiles_info['tile_size']
-                if y_ind == tiles_info['y_max']:
-                    tile_size_y = tiles_info['y_max_size']
-                else:
-                    tile_size_y = tiles_info['tile_size']
+            y_x_ind.append(tuple((y_ind, x_ind)))
+    #print('Extracting spots from: ', end='')
+    for i in tqdm(range(len(y_x_ind))):
+        y_ind, x_ind = y_x_ind[i]
+        tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
+        if np.isin(tile_name, tile_names['selected_tile_names']):
+            # load selected tile
+            #print(tile_name, end=' ')
+            if x_ind == tiles_info['x_max']:
+                tile_size_x = tiles_info['x_max_size']
+            else:
+                tile_size_x = tiles_info['tile_size']
+            if y_ind == tiles_info['y_max']:
+                tile_size_y = tiles_info['y_max_size']
+            else:
+                tile_size_y = tiles_info['tile_size']
 
-                imgs = np.zeros((tile_size_y, tile_size_x, len(channels_info['channel_names']), R))
-                for ind_cy in range(R):
-                    for ind_ch in range(len(channels_info['channel_names'])):
-                        if channels_info['channel_names'][ind_ch] != 'DAPI':  # no need for dapi
-                            try:
-                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
-                                    tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
-                                        ind_ch] + '_c0' + str(
-                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(
-                                    np.float32)
-                            except:
-                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
-                                    tifs_path + tiles_info['filename_prefix'] + tile_name + '_c0' + str(
-                                        ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][
-                                        ind_ch] + '.tif').astype(
-                                    np.float32)
-                                
-                if use_ref_anchor:
-                    ref_anchor_name = channels_info['channel_names'][4] + '_c0' + str(-1 + 1 + 1) 
-                    ref = tifffile.imread(tifs_path + tiles_info['filename_prefix'] + ref_anchor_name + '_' + tile_name + '.tif').astype(np.float32)
+            imgs = np.zeros((tile_size_y, tile_size_x, len(channels_info['channel_names']), R))
+            for ind_cy in range(R):
+                for ind_ch in range(len(channels_info['channel_names'])):
+                    if channels_info['channel_names'][ind_ch] != 'DAPI':  # no need for dapi
+                        try:
+                            imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
+                                tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
+                                    ind_ch] + '_c0' + str(
+                                    ind_cy + 1 + ind_cy_move_forward_by) + '_' + tile_name + '.tif').astype(
+                                np.float32)
+                        except:
+                            imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
+                                tifs_path + tiles_info['filename_prefix'] + tile_name + '_c0' + str(
+                                    ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][
+                                    ind_ch] + '.tif').astype(
+                                np.float32)
 
-                imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
-                # apply top-hat filtering to each coding channel
-                imgs_coding_tophat = np.zeros_like(imgs_coding)
-                for ind_cy in range(R):
-                    for ind_ch in range(C):
-                        imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
-                                                                                disk(spots_params['spot_diam_tophat']))
+            if use_ref_anchor:
+                ref_anchor_name = channels_info['channel_names'][4] + '_c0' + str(-1 + 1 + 1)
+                ref = tifffile.imread(tifs_path + tiles_info['filename_prefix'] + ref_anchor_name + '_' + tile_name + '.tif').astype(np.float32)
 
-                # extract anchor channel across all cycles
-                if anchor_available:
-                    anchors = np.swapaxes(
-                        np.swapaxes(
-                            np.squeeze(
-                                imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),
-                            0, 2), 1, 2)
+            imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
+            # apply top-hat filtering to each coding channel
+            imgs_coding_tophat = np.zeros_like(imgs_coding)
+            for ind_cy in range(R):
+                for ind_ch in range(C):
+                    imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
+                                                                            disk(spots_params['spot_diam_tophat']))
+
+            # extract anchor channel across all cycles
+            if anchor_available:
+                anchors = np.swapaxes(
+                    np.swapaxes(
+                        np.squeeze(
+                            imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),
+                        0, 2), 1, 2)
+            else:
+                # if anchor is not available, form "fake-anchors" from coding channels (already top-hat filtered + normalized)
+                if fake_anchor_from_top_hat:
+                    imgs_for_fake_anchor = imgs_coding_tophat
                 else:
-                    # if anchor is not available, form "fake-anchors" from coding channels (already top-hat filtered + normalized)
-                    if fake_anchor_from_top_hat:
-                        imgs_for_fake_anchor = imgs_coding_tophat
-                    else:
-                        imgs_for_fake_anchor = imgs_coding    
-                    imgs_for_fake_anchor_norm = (imgs_for_fake_anchor - np.min(imgs_for_fake_anchor, axis=(0, 1),
-                                                                           keepdims=True)) / (
-                                                      np.percentile(imgs_for_fake_anchor, fake_anchor_prc, axis=(0, 1),
-                                                                    keepdims=True) - np.min(imgs_for_fake_anchor,
-                                                                                            axis=(0, 1),
-                                                                                            keepdims=True))
-                    # imgs_coding_tophat_norm = imgs_coding_tophat # without normalization
-                    anchors = np.swapaxes(np.swapaxes(imgs_for_fake_anchor_norm.max(axis=2), 0, 2), 1, 2)
-                                                    
-                    if use_ref_anchor:#insert anchor from the reference round at the beginning
-                        #normalize ref anchor with the same per as when creating fake anchors
-                        ref_norm = (ref - np.min(ref)) / (np.percentile(ref, fake_anchor_prc) - np.min(ref))
-                        anchors = np.concatenate((np.expand_dims(ref_norm, 0), anchors), axis=0)
-                        
-                    if not fake_anchor_gauss_sigma is None:
-                        #anchors = scipy.ndimage.gaussian_filter(anchors, fake_anchor_gauss_sigma.mean())
-                        for r in range(anchors.shape[0]):
-                            anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], fake_anchor_gauss_sigma[r])
-                        
-                    if anchors_top_hat:
-                        for r in range(anchors.shape[0]):
-                            anchors[r,:,:] = white_tophat(anchors[r,:,:],disk(spots_params['spot_diam_tophat'])) 
-                            
-                if not anchor_gauss_sigma is None:
+                    imgs_for_fake_anchor = imgs_coding
+                imgs_for_fake_anchor_norm = (imgs_for_fake_anchor - np.min(imgs_for_fake_anchor, axis=(0, 1),
+                                                                       keepdims=True)) / (
+                                                  np.percentile(imgs_for_fake_anchor, fake_anchor_prc, axis=(0, 1),
+                                                                keepdims=True) - np.min(imgs_for_fake_anchor,
+                                                                                        axis=(0, 1),
+                                                                                        keepdims=True))
+                # imgs_coding_tophat_norm = imgs_coding_tophat # without normalization
+                anchors = np.swapaxes(np.swapaxes(imgs_for_fake_anchor_norm.max(axis=2), 0, 2), 1, 2)
+
+                if use_ref_anchor:#insert anchor from the reference round at the beginning
+                    #normalize ref anchor with the same per as when creating fake anchors
+                    ref_norm = (ref - np.min(ref)) / (np.percentile(ref, fake_anchor_prc) - np.min(ref))
+                    anchors = np.concatenate((np.expand_dims(ref_norm, 0), anchors), axis=0)
+
+                if not fake_anchor_gauss_sigma is None:
+                    #anchors = scipy.ndimage.gaussian_filter(anchors, fake_anchor_gauss_sigma.mean())
                     for r in range(anchors.shape[0]):
-                        anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], anchor_gauss_sigma[r])
-                        
-                if anchor_wave_denoise:
+                        anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], fake_anchor_gauss_sigma[r])
+
+                if anchors_top_hat:
                     for r in range(anchors.shape[0]):
-                        anchors[r,:,:] = denoise_wavelet(anchors[r,:,:].astype(np.uint16), sigma=0.001, wavelet='db4')*1000
-                    
+                        anchors[r,:,:] = white_tophat(anchors[r,:,:],disk(spots_params['spot_diam_tophat']))
 
-                anchors = anchors[anchors_cy_ind_for_spot_detect, :,
-                          :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
+            if not anchor_gauss_sigma is None:
+                for r in range(anchors.shape[0]):
+                    anchors[r,:,:] = scipy.ndimage.gaussian_filter(anchors[r,:,:], anchor_gauss_sigma[r])
 
-                # detect and extract spots from the loaded tile
-                spots_i, centers_i, spots_notophat_i, sigmas_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
-                                                                                imgs_coding,
-                                                                                compute_also_without_tophat,
-                                                                                compute_sigmas,
-                                                                                norm_anchors,
-                                                                                use_blob_detector,
-                                                                                correct_reg_via_trackpy,
-                                                                                correct_reg_detect_in_all,
-                                                                                after_correction_decrease_sep_by,
-                                                                                after_correction_decrease_prc_by,
-                                                                                spots_params['trackpy_diam_detect'],
-                                                                                spots_params['trackpy_search_range'],
-                                                                                spots_params['trackpy_prc'],
-                                                                                spots_params['trackpy_sep'])
-                N_i = spots_i.shape[0]
-                if N_i > 0:
-                    spots = np.concatenate((spots, spots_i))
-                    if compute_also_without_tophat:
-                        spots_notophat = np.concatenate((spots_notophat, spots_notophat_i))
-                    # saving spots locations from the 1st cycle in a data frame (needed for ploting)
-                    X = (x_ind - tiles_to_load['x_start']) * tiles_info['tile_size'] + centers_i[:, 0]
-                    Y = (y_ind - tiles_to_load['y_start']) * tiles_info['tile_size'] + centers_i[:, 1]
-                    Tile = np.tile(np.array([tile_name]), N_i)
-                    if compute_sigmas:
-                        spots_loc_i = pd.DataFrame(
-                            np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), sigmas_i.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
-                            columns=['X', 'Y', 'Sigma', 'Tile'], index=None)
-                    else:
-                        spots_loc_i = pd.DataFrame(
-                            np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
-                            columns=['X', 'Y', 'Tile'], index=None)
-                    spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
+            if anchor_wave_denoise:
+                for r in range(anchors.shape[0]):
+                    anchors[r,:,:] = denoise_wavelet(anchors[r,:,:].astype(np.uint16), sigma=0.001, wavelet='db4')*1000
+
+
+            anchors = anchors[anchors_cy_ind_for_spot_detect, :,
+                      :]  # select only those cycles given in anchors_cy_ind_for_spot_detect
+
+            # detect and extract spots from the loaded tile
+            spots_i, centers_i, spots_notophat_i, sigmas_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
+                                                                            imgs_coding,
+                                                                            compute_also_without_tophat,
+                                                                            compute_sigmas,
+                                                                            norm_anchors,
+                                                                            use_blob_detector,
+                                                                            correct_reg_via_trackpy,
+                                                                            correct_reg_detect_in_all,
+                                                                            after_correction_decrease_sep_by,
+                                                                            after_correction_decrease_prc_by,
+                                                                            spots_params['trackpy_spot_diam'],
+                                                                            spots_params['trackpy_search_range'],
+                                                                            spots_params['trackpy_prc'],
+                                                                            spots_params['trackpy_sep'])
+            N_i = spots_i.shape[0]
+            if N_i > 0:
+                spots = np.concatenate((spots, spots_i))
+                if compute_also_without_tophat:
+                    spots_notophat = np.concatenate((spots_notophat, spots_notophat_i))
+                # saving spots locations from the 1st cycle in a data frame (needed for ploting)
+                X = (x_ind - tiles_to_load['x_start']) * tiles_info['tile_size'] + centers_i[:, 0]
+                Y = (y_ind - tiles_to_load['y_start']) * tiles_info['tile_size'] + centers_i[:, 1]
+                Tile = np.tile(np.array([tile_name]), N_i)
+                if compute_sigmas:
+                    spots_loc_i = pd.DataFrame(
+                        np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), sigmas_i.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
+                        columns=['X', 'Y', 'Sigma', 'Tile'], index=None)
+                else:
+                    spots_loc_i = pd.DataFrame(
+                        np.concatenate((X.reshape((N_i, 1)), Y.reshape((N_i, 1)), Tile.reshape((N_i, 1))), axis=1),
+                        columns=['X', 'Y', 'Tile'], index=None)
+                spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
     return spots, spots_loc, spots_notophat#, imgs_coding_tophat
 
 
