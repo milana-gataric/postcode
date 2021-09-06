@@ -1,6 +1,6 @@
 ## PoSTcode
 
-This is an implementation of the <u>P</u>r<u>o</u>babilistic Image-based <u>S</u>patial <u>T</u>ranscriptomics De<u>code</u>r (PoSTcode), which is based on a re-parametrised matrix-variate Gaussian mixture model,
+This is an implementation of the **P**r**o**babilistic Image-based **S**patial **T**ranscriptomics De**code**r (PoSTcode), which is based on a re-parametrised matrix-variate Gaussian mixture model,
 implemented using stochastic variational inference in [pyro](https://pyro.ai/). 
 <!The method implemented here is described in the paper ["PoSTcode: Probabilistic image-based spatial transcriptomics decoder"]().
 >
