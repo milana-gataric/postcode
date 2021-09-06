@@ -114,3 +114,45 @@ def collect_spots_from_mat_files(extracted_spots_path, C, R, tiles_to_load, tile
                     spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
     return spots, spots_loc
 
+
+def load_tiles(tifs_path, channels_info, C, R, tile_names, tiles_info, tiles_to_load,
+               top_hat_coding=True, diam_tophat=5, ind_cy_move_forward_by=0):
+    B = (tiles_to_load['y_end'] - tiles_to_load['y_start'] + 1) * (tiles_to_load['x_end'] - tiles_to_load['x_start'] + 1)
+    b = -1
+    tiles = np.zeros((B, tiles_info['tile_size'], tiles_info['tile_size'], len(channels_info['channel_names']), R))
+    print('Loading: ', end='')
+    for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
+        for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
+            b = b + 1
+            tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
+            if np.isin(tile_name, tile_names['selected_tile_names']):
+                # load selected tile
+                print(tile_name, end=' ')
+                tile_size_x = tiles_info['x_max_size'] if x_ind == tiles_info['x_max'] else tiles_info['tile_size']
+                tile_size_y = tiles_info['y_max_size'] if y_ind == tiles_info['y_max'] else tiles_info['tile_size']
+
+                imgs = np.zeros((tile_size_y, tile_size_x, len(channels_info['channel_names']), R))
+                for ind_cy in range(R):
+                    for ind_ch in range(len(channels_info['channel_names'])):
+                        if channels_info['channel_names'][ind_ch] != 'DAPI':  # no need for DAPI
+                            try:
+                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][ind_ch] + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_'
+                                                                             + tile_name + '.tif').astype(np.float32)
+                            except:
+                                imgs[:, :, ind_ch, ind_cy] = tifffile.imread(tifs_path + tiles_info['filename_prefix']
+                                                                             + tile_name + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][ind_ch] + '.tif').astype(np.float32)
+
+                if top_hat_coding:
+                    imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
+                    # apply top-hat filtering to each coding channel
+                    imgs_coding_tophat = np.zeros_like(imgs_coding)
+                    for ind_cy in range(R):
+                        for ind_ch in range(C):
+                            imgs_coding_tophat[:, :, ind_ch, ind_cy] = white_tophat(imgs_coding[:, :, ind_ch, ind_cy],
+                                                                                    disk(diam_tophat))
+
+                    imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :] = imgs_coding_tophat
+
+                tiles[b, 0:tile_size_y, 0:tile_size_x, :, :] = imgs
+
+    return tiles
