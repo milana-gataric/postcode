@@ -1,9 +1,9 @@
 ## PoSTcode
 
-This code implements probabilistic decoding of image-based spatial
-transcriptomics via a re-parametrized matrix-variate Gaussian mixture model,
+This is an implementation of the <u>P</u>r<u>o</u>babilistic Image-based <u>S</u>patial <u>T</u>ranscriptomics De<u>code</u>r (PoSTcode), which is based on a re-parametrised matrix-variate Gaussian mixture model,
 implemented using stochastic variational inference in [pyro](https://pyro.ai/). 
-The method implemented here is described in the paper ["PoSTcode: Probabilistic image-based spatial transcriptomics decoder"]().
+<!The method implemented here is described in the paper ["PoSTcode: Probabilistic image-based spatial transcriptomics decoder"]().
+>
 
 To get started, please explore the Jupyter Notebook
 [example_iss_mousebrain.ipynb](notebooks/example_iss_mousebrain.ipynb), which provides an
