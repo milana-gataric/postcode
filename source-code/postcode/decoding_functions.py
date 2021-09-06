@@ -13,6 +13,10 @@ from pyro.infer.autoguide import AutoDelta
 
 assert pyro.__version__.startswith('1')
 
+# torch.manual_seed(set_seed)
+# random.seed(set_seed)
+# np.random.seed(set_seed)
+
 # auxiliary functions required for decoding
 def torch_format(numpy_array):
     D = numpy_array.shape[1] * numpy_array.shape[2]
@@ -123,9 +127,6 @@ def decoding_function(spots, barcodes_01,
     # barcodes_01: a numpy array of dim K x C x R (number of barcodes x coding channels x rounds)
     ##############################
 
-    # torch.manual_seed(set_seed)
-    # random.seed(set_seed)
-    # np.random.seed(set_seed)
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
