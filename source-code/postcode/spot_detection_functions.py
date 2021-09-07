@@ -4,7 +4,6 @@ import tifffile
 import trackpy
 from skimage.morphology import white_tophat, disk
 from skimage.feature import blob_log
-from skimage.restoration import denoise_wavelet
 import scipy
 from tqdm import tqdm
 import multiprocessing
@@ -183,8 +182,10 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
-                                spots_params, ind_cy_move_forward_by=0, anchor_available=True, fake_anchor_prc=95, 
-                                fake_anchor_gauss_sigma=None, fake_anchor_from_top_hat=False, anchors_top_hat=False,
+                                spots_params, ind_cy_move_forward_by=0, anchor_available=True, 
+                                return_anchors_for_plotting=False,
+                                fake_anchor_prc=95, fake_anchor_gauss_sigma=None, fake_anchor_from_top_hat=False, 
+                                anchors_top_hat=False,
                                 use_ref_anchor=False,
                                 correct_reg_via_trackpy=False, 
                                 correct_reg_detect_in_all=False, #relevant only when correct_reg_via_trackpy=True; if False keeps the spots from the first frame passed to the spot detection function after registration correction, and if True, it links the spots after correction
@@ -308,4 +309,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
             spots_loc_i['Y'] = (y_ind - tiles_to_load['y_start']) * tiles_info['tile_size'] + centers_i[:, 1]
             spots_loc_i['Tile'] = np.tile(np.array([tile_name]), N_i)
             spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
-    return spots, spots_loc, spots_notophat
+            
+    anchors = None if not return_anchors_for_plotting else anchors
+    
+    return spots, spots_loc, spots_notophat, anchors
