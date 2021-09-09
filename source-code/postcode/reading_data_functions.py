@@ -158,3 +158,14 @@ def load_tiles(tifs_path, channels_info, C, R, tile_names, tiles_info, tiles_to_
                 tiles[b, 0:tile_size_y, 0:tile_size_x, :, :] = imgs
 
     return tiles
+
+
+def find_xy_range_of_tile_names(tile_names):
+    # assuming x and y are at most two digits
+    y_max = 0; x_max = 0; y_min = 100; x_min = 100
+    for tile_name in tile_names:
+        y_max = max(y_max, int(tile_name[-2:].replace('Y','')))
+        x_max = max(x_max, int(tile_name[1:3].replace('_','')))
+        y_min = min(y_min, int(tile_name[-2:].replace('Y','')))
+        x_min = min(x_min, int(tile_name[1:3].replace('_','')))
+    return x_min, x_max, y_min, y_max
