@@ -9,7 +9,7 @@ implemented using stochastic variational inference in [pyro](https://pyro.ai/).
 >
 
 To get started, please explore the Jupyter Notebook
-[example_iss_mousebrain.ipynb](notebooks/example_iss_mousebrain.ipynb), which provides an
+[example_iss_tile.ipynb](notebooks/example_iss_tile.ipynb), which provides an
 example of how the code can be used to decode a
 ISS mouse brain dataset.
 
