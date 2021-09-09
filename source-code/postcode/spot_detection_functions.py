@@ -183,7 +183,7 @@ def detect_and_extract_spots(imgs_coding, anchors, C, R, imgs_also_without_topha
 def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 tile_names, tiles_info, tiles_to_load,
                                 spots_params, ind_cy_move_forward_by=0, anchor_available=True, 
-                                return_anchors_for_plotting=False,
+                                return_anchors=False, return_cod_imgs=False, # last loaded tile will be returned
                                 fake_anchor_prc=95, fake_anchor_gauss_sigma=None, fake_anchor_from_top_hat=False, 
                                 anchors_top_hat=False,
                                 use_ref_anchor=False,
@@ -210,7 +210,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
         spots_params['spot_diam_tophat'] = spots_params['trackpy_spot_diam']
     if anchors_cy_ind_for_spot_detect is None:
         anchors_cy_ind_for_spot_detect = np.arange(R+1) if use_ref_anchor else np.arange(R)
-    # using tile_names, find all (x, y) tile coordinates being loaded
+    # by using tile_names, find all (x, y) tile coordinates requested for loading
     y_x_ind = []
     for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
         for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
@@ -310,6 +310,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
             spots_loc_i['Tile'] = np.tile(np.array([tile_name]), N_i)
             spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
             
-    anchors = None if not return_anchors_for_plotting else anchors
+    anchors = None if not return_anchors else anchors
+    imgs_coding = None if not return_cod_imgs else imgs_coding
     
-    return spots, spots_loc, spots_notophat, anchors
+    return {'spots': spots, 'spots_loc': spots_loc, 'spots_notophat': spots_notophat, 'anchors': anchors, 'imgs_coding': imgs_coding}
