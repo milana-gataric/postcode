@@ -192,7 +192,10 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                                 after_correction_decrease_sep_by=0, after_correction_decrease_prc_by=0,
                                 anchors_cy_ind_for_spot_detect=None, #which anchors to pass to spot detection (all by default, should be all when correct_reg_via_trackpy=True)
                                 norm_anchors=False, use_blob_detector=False,
-                                compute_also_without_tophat=False,compute_sigmas=False):
+                                compute_also_without_tophat=False,compute_sigmas=False,
+                                parallel=False, #set True for parallel computation over num_cores
+                                num_cores=None #specify number of cpus for parallel computation (if None, and prallel=True, num_cores = multiprocessing.cpu_count())
+                                ):
     # anchors_cy_ind_for_spot_detect can be any number in {0,..,R-1} to indicate if a single cycle should be used
     # for spot detection, otherwise all cycles are used for spot detection with tracking
     # (there may be a reference cycle with anchor and no coding channels -- if using it set use_ref_anchor=True)
@@ -210,15 +213,8 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
         spots_params['spot_diam_tophat'] = spots_params['trackpy_spot_diam']
     if anchors_cy_ind_for_spot_detect is None:
         anchors_cy_ind_for_spot_detect = np.arange(R+1) if use_ref_anchor else np.arange(R)
-    # by using tile_names, find all (x, y) tile coordinates requested for loading
-    y_x_ind = []
-    for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
-        for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
-            tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
-            if np.isin(tile_name, tile_names['selected_tile_names']):
-                y_x_ind.append(tuple((y_ind, x_ind)))
-    for i in tqdm(range(len(y_x_ind))):
-        y_ind, x_ind = y_x_ind[i]
+
+    def process_one_tile(y_ind, x_ind):
         tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
         # load selected tile of prescribed dimensions
         tile_size_x = tiles_info['x_max_size'] if x_ind == tiles_info['x_max'] else tiles_info['tile_size']
@@ -229,12 +225,14 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
                 if channels_info['channel_names'][ind_ch] != 'DAPI':  # no need for DAPI
                     try:  # handling different tile naming format
                         imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
-                            tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][ind_ch] + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_'
+                            tifs_path + tiles_info['filename_prefix'] + channels_info['channel_names'][
+                                ind_ch] + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_'
                             + tile_name + '.tif').astype(np.float32)
                     except:
                         imgs[:, :, ind_ch, ind_cy] = tifffile.imread(
                             tifs_path + tiles_info['filename_prefix']
-                            + tile_name + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_' + channels_info['channel_names'][ind_ch] + '.tif').astype(np.float32)
+                            + tile_name + '_c0' + str(ind_cy + 1 + ind_cy_move_forward_by) + '_' +
+                            channels_info['channel_names'][ind_ch] + '.tif').astype(np.float32)
 
         imgs_coding = imgs[:, :, np.where(np.array(channels_info['coding_chs']) == True)[0], :]
 
@@ -247,19 +245,26 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
 
         if use_ref_anchor:
             ref_anchor_name = channels_info['channel_names'][4] + '_c0' + str(-1 + 1 + 1)
-            ref = tifffile.imread(tifs_path + tiles_info['filename_prefix'] + ref_anchor_name + '_' + tile_name + '.tif').astype(np.float32)
+            ref = tifffile.imread(
+                tifs_path + tiles_info['filename_prefix'] + ref_anchor_name + '_' + tile_name + '.tif').astype(
+                np.float32)
 
         # extract anchor channel across all cycles so it has dimensions RxWxH, or
         # if anchor is not available, form "fake-anchors" from coding channels (already top-hat filtered + normalized)
         if anchor_available:
-            anchors = np.swapaxes(np.swapaxes(np.squeeze(imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]),0, 2), 1, 2)
+            anchors = np.swapaxes(np.swapaxes(
+                np.squeeze(imgs[:, :, np.where(np.array(channels_info['channel_base']) == 'anchor')[0][0], :]), 0, 2),
+                                  1, 2)
             if use_ref_anchor:
                 # insert anchor from the reference round at the beginning if using
                 anchors = np.concatenate((np.expand_dims(ref, 0), anchors), axis=0)
         else:
             imgs_for_fake_anchor = imgs_coding_tophat if fake_anchor_from_top_hat else imgs_coding
-            imgs_for_fake_anchor_norm = (imgs_for_fake_anchor - np.min(imgs_for_fake_anchor, axis=(0, 1), keepdims=True)) / (
-                                              np.percentile(imgs_for_fake_anchor, fake_anchor_prc, axis=(0, 1), keepdims=True) - np.min(imgs_for_fake_anchor, axis=(0, 1), keepdims=True))
+            imgs_for_fake_anchor_norm = (imgs_for_fake_anchor - np.min(imgs_for_fake_anchor, axis=(0, 1),
+                                                                       keepdims=True)) / (
+                                                np.percentile(imgs_for_fake_anchor, fake_anchor_prc, axis=(0, 1),
+                                                              keepdims=True) - np.min(imgs_for_fake_anchor, axis=(0, 1),
+                                                                                      keepdims=True))
             anchors = np.swapaxes(np.swapaxes(imgs_for_fake_anchor_norm.max(axis=2), 0, 2), 1, 2)
 
             if use_ref_anchor:
@@ -280,20 +285,43 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
         anchors = anchors[anchors_cy_ind_for_spot_detect, :, :]
 
         # detect and extract spots from the loaded tile
-        spots_i, centers_i, spots_notophat_i, sigmas_i = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
-                                                                        imgs_coding,
-                                                                        compute_also_without_tophat,
-                                                                        compute_sigmas,
-                                                                        norm_anchors,
-                                                                        use_blob_detector,
-                                                                        correct_reg_via_trackpy,
-                                                                        correct_reg_detect_in_all,
-                                                                        after_correction_decrease_sep_by,
-                                                                        after_correction_decrease_prc_by,
-                                                                        spots_params['trackpy_spot_diam'],
-                                                                        spots_params['trackpy_search_range'],
-                                                                        spots_params['trackpy_prc'],
-                                                                        spots_params['trackpy_sep'])
+        spots, centers, spots_notophat, sigmas = detect_and_extract_spots(imgs_coding_tophat, anchors, C, R,
+                                                                                  imgs_coding,
+                                                                                  compute_also_without_tophat,
+                                                                                  compute_sigmas,
+                                                                                  norm_anchors,
+                                                                                  use_blob_detector,
+                                                                                  correct_reg_via_trackpy,
+                                                                                  correct_reg_detect_in_all,
+                                                                                  after_correction_decrease_sep_by,
+                                                                                  after_correction_decrease_prc_by,
+                                                                                  spots_params['trackpy_spot_diam'],
+                                                                                  spots_params['trackpy_search_range'],
+                                                                                  spots_params['trackpy_prc'],
+                                                                                  spots_params['trackpy_sep'])
+        anchors = None if not return_anchors else anchors
+        imgs_coding = None if not return_cod_imgs else imgs_coding
+        return spots, centers, spots_notophat, sigmas, anchors, imgs_coding
+
+    # by using tile_names, find all (x, y) tile coordinates requested for loading
+    y_x_ind = []
+    for y_ind in range(tiles_to_load['y_start'], tiles_to_load['y_end'] + 1):
+        for x_ind in range(tiles_to_load['x_start'], tiles_to_load['x_end'] + 1):
+            tile_name = 'X' + str(x_ind) + '_Y' + str(y_ind)
+            if np.isin(tile_name, tile_names['selected_tile_names']):
+                y_x_ind.append(tuple((y_ind, x_ind)))
+
+    if parallel:
+        if num_cores is None:
+            num_cores = multiprocessing.cpu_count()
+        processed_list = Parallel(n_jobs=num_cores)(delayed(process_one_tile)(i[0], i[1]) for i in y_x_ind)
+
+    for i in tqdm(range(len(y_x_ind))):
+        y_ind, x_ind = y_x_ind[i]
+        if parallel:
+            spots_i, centers_i, spots_notophat_i, sigmas_i, anchors_i, imgs_coding_i = processed_list[i]
+        else:
+            spots_i, centers_i, spots_notophat_i, sigmas_i, anchors_i, imgs_coding_i = process_one_tile(y_ind, x_ind)
         N_i = spots_i.shape[0]
         if N_i > 0:
             spots = np.concatenate((spots, spots_i))
@@ -310,7 +338,7 @@ def load_tiles_to_extract_spots(tifs_path, channels_info, C, R,
             spots_loc_i['Tile'] = np.tile(np.array([tile_name]), N_i)
             spots_loc = spots_loc.append(spots_loc_i, ignore_index=True)
             
-    anchors = None if not return_anchors else anchors
-    imgs_coding = None if not return_cod_imgs else imgs_coding
+    anchors = None if not return_anchors else anchors_i
+    imgs_coding = None if not return_cod_imgs else imgs_coding_i
     
     return {'spots': spots, 'spots_loc': spots_loc, 'spots_notophat': spots_notophat, 'anchors': anchors, 'imgs_coding': imgs_coding}
