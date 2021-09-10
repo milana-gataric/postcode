@@ -120,13 +120,20 @@ def train(svi, num_iterations, data, N, D, C, R, K, codes, print_training_progre
 # input - output decoding function
 def decoding_function(spots, barcodes_01,
                       num_iter=60, batch_size=15000, up_prc_to_remove=99.95,
-                      estimate_bkg=True, estimate_additional_barcodes=None, add_remaining_barcodes_prior=0.05,
+                      modify_prior=True, # should be false for pixel-wise decoding (since there is a lot of bkg)
+                      estimate_bkg=True, estimate_additional_barcodes=None, # controls adding additional barcodes during parameter estimation
+                      add_remaining_barcodes_prior=0.05, # after model is estimated, infeasible barcodes are used in the e-step with given prior
                       print_training_progress=True, set_seed=1):
-    ##############################
+    # INPUT:
     # spots: a numpy array of dim N x C x R (number of spots x coding channels x rounds);
     # barcodes_01: a numpy array of dim K x C x R (number of barcodes x coding channels x rounds)
-    ##############################
+    # OUTPUT:
+    # 'class_probs': posterior probabilities computed via e-step
+    # 'class_ind': indices of different barcode classes (genes / background / infeasible / nan)
+    # 'params': estimated model parameters
+    # 'norm_const': constants used for normalization of spots prior to model fitting
 
+    # if cuda available, runs on gpu
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
@@ -138,7 +145,6 @@ def decoding_function(spots, barcodes_01,
     K = barcodes_01.shape[0]
     D = C * R
     data = torch_format(spots)
-    # data = data.to(device)
     codes = torch_format(barcodes_01)
 
     # include background / any additional barcode in codebook
@@ -165,15 +171,6 @@ def decoding_function(spots, barcodes_01,
     data_log_std = data_log[ind_keep, :].std(dim=0, keepdim=True)
     data_norm = (data_log - data_log_mean) / data_log_std  # column-wise normalization
     
-#     if torch.cuda.is_available():
-#         dev = "cuda:0"
-#         torch.set_default_tensor_type('torch.cuda.FloatTensor')
-#     else:
-#         dev = "cpu"
-#     device = torch.device(dev)
-#     codes = codes.to(device)
-#     data_norm = data_norm.to(device)
-    
     # model training:
     optim = Adam({'lr': 0.085, 'betas': [0.85, 0.99]})
     svi = SVI(model_constrained_tensor, auto_guide_constrained_tensor, optim, loss=TraceEnum_ELBO(max_plate_nesting=1))
@@ -191,7 +188,7 @@ def decoding_function(spots, barcodes_01,
     theta_star = torch.matmul(codes * codes_tr_v_star + codes_tr_consts_v_star, mat_sqrt(sigma_star, D))
 
     # computing class probabilities with appropriate prior probabilities
-    if w_star.shape[0] > K:
+    if modify_prior and w_star.shape[0] > K:
         # making sure that the K barcode classes have higher prior in case there are more than K classes
         w_star_mod = torch.cat((w_star[0:K], w_star[0:K].min().repeat(w_star.shape[0] - K)))
         w_star_mod = w_star_mod / w_star_mod.sum()
