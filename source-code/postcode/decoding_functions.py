@@ -120,7 +120,7 @@ def train(svi, num_iterations, data, N, D, C, R, K, codes, print_training_progre
 # input - output decoding function
 def decoding_function(spots, barcodes_01,
                       num_iter=60, batch_size=15000, up_prc_to_remove=99.95,
-                      modify_prior=True, # should be false for pixel-wise decoding (since there is a lot of bkg)
+                      modify_bkg_prior=True, # should be False when there is a lot of background signal (eg pixel-wise decoding, a lot of noisy boundary tiles)
                       estimate_bkg=True, estimate_additional_barcodes=None, # controls adding additional barcodes during parameter estimation
                       add_remaining_barcodes_prior=0.05, # after model is estimated, infeasible barcodes are used in the e-step with given prior
                       print_training_progress=True, set_seed=1):
@@ -140,6 +140,9 @@ def decoding_function(spots, barcodes_01,
         torch.set_default_tensor_type("torch.FloatTensor")
             
     N = spots.shape[0]
+    if N == 0:
+        print('There are no spots to decode.')
+        return
     C = spots.shape[1]
     R = spots.shape[2]
     K = barcodes_01.shape[0]
@@ -188,7 +191,7 @@ def decoding_function(spots, barcodes_01,
     theta_star = torch.matmul(codes * codes_tr_v_star + codes_tr_consts_v_star, mat_sqrt(sigma_star, D))
 
     # computing class probabilities with appropriate prior probabilities
-    if modify_prior and w_star.shape[0] > K:
+    if modify_bkg_prior and w_star.shape[0] > K:
         # making sure that the K barcode classes have higher prior in case there are more than K classes
         w_star_mod = torch.cat((w_star[0:K], w_star[0:K].min().repeat(w_star.shape[0] - K)))
         w_star_mod = w_star_mod / w_star_mod.sum()
