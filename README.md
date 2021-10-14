@@ -22,4 +22,4 @@ python3 -m pip install -e .
 
 The code is written by Milana Gataric (milanagataric at gmail.com). 
 If you use this code, please cite the original paper where it was introduced:
-[PoSTcode: Probabilistic image-based spatial transcriptomics decoder]().
+[PoSTcode: Probabilistic image-based spatial transcriptomics decoder](https://doi.org/10.1101/2021.10.12.464086).
