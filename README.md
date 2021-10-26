@@ -11,10 +11,10 @@ implemented using stochastic variational inference in [pyro](https://pyro.ai/).
 To get started, please explore the Jupyter Notebook
 [example_iss_tile.ipynb](notebooks/example_iss_tile.ipynb), which provides an
 example of how the code can be used to decode an [ISS tile](example-iss-tile-data) from the
-mouse brain dataset stored locally.
+mouse brain dataset stored locally and takes less than 1 minute to run.
 
 The code has been tested with python 3.6.12 and its requirements can be
-fulfilled by running
+fulfilled (in less than 5 minutes) by running
 ```
 python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
